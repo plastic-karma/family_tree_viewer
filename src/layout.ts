@@ -90,6 +90,11 @@ export function buildFlowElements(data: GedcomData): {
     generations.get(gen)!.push(id);
   }
 
+  // Find the maximum generation so we can flip the Y axis:
+  // latest generation (highest number) goes at the top (y=0),
+  // oldest ancestors go at the bottom.
+  const maxGen = Math.max(...generationMap.values(), 0);
+
   // Step 3: Create person nodes with positions
   for (const [gen, ids] of generations) {
     const totalWidth = ids.length * (NODE_WIDTH + H_GAP) - H_GAP;
@@ -97,12 +102,13 @@ export function buildFlowElements(data: GedcomData): {
 
     ids.forEach((id, i) => {
       const indi = data.individuals.get(id)!;
+      const flippedGen = maxGen - gen;
       const node: Node<PersonNodeData> = {
         id,
         type: "person",
         position: {
           x: startX + i * (NODE_WIDTH + H_GAP),
-          y: gen * (NODE_HEIGHT + V_GAP),
+          y: flippedGen * (NODE_HEIGHT + V_GAP),
         },
         data: {
           label: indi.name || "Unknown",
@@ -124,6 +130,7 @@ export function buildFlowElements(data: GedcomData): {
     const parentGen = Math.max(
       ...parentIds.map((id) => generationMap.get(id) ?? 0)
     );
+    const flippedParentGen = maxGen - parentGen;
 
     // Position the junction node between parent and child generations,
     // horizontally centered between the parents.
@@ -141,7 +148,7 @@ export function buildFlowElements(data: GedcomData): {
       type: "default",
       position: {
         x: avgX + NODE_WIDTH / 2 - FAMILY_NODE_SIZE / 2,
-        y: parentGen * (NODE_HEIGHT + V_GAP) + NODE_HEIGHT + 20,
+        y: flippedParentGen * (NODE_HEIGHT + V_GAP) + NODE_HEIGHT + 20,
       },
       data: { label: "" },
       style: {
@@ -157,22 +164,23 @@ export function buildFlowElements(data: GedcomData): {
     };
     nodes.push(junctionNode);
 
-    // Edges: parents → family junction
-    for (const parentId of parentIds) {
+    // Edges flow top→bottom visually (youngest→oldest).
+    // Children (top) → family junction → parents (bottom).
+    for (const childId of fam.childrenIds) {
       edges.push({
-        id: `${parentId}-${famId}`,
-        source: parentId,
+        id: `${childId}-${famId}`,
+        source: childId,
         target: famId,
         type: "smoothstep",
       });
     }
 
-    // Edges: family junction → children
-    for (const childId of fam.childrenIds) {
+    // Family junction → parents
+    for (const parentId of parentIds) {
       edges.push({
-        id: `${famId}-${childId}`,
+        id: `${famId}-${parentId}`,
         source: famId,
-        target: childId,
+        target: parentId,
         type: "smoothstep",
       });
     }

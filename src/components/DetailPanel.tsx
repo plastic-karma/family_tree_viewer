@@ -3,23 +3,24 @@ import type { Individual, GedcomData } from "../parser/types";
 /**
  * Side panel showing details for a selected person.
  *
- * This component receives the full GedcomData so it can resolve
- * family references — e.g., showing spouse and children names,
- * not just IDs like "@I3@".
- *
- * Layout: positioned as a fixed sidebar on the right. We use
- * position:fixed rather than flexbox alongside TreeViewer because
- * React Flow needs its container to be the full viewport size.
- * A fixed overlay is simpler than restructuring the layout.
+ * onNavigate is called when the user clicks a linked person name
+ * (parent, spouse, or child). The parent component handles updating
+ * the selection and telling React Flow to center on that node.
  */
 
 interface DetailPanelProps {
   individual: Individual;
   gedcom: GedcomData;
   onClose: () => void;
+  onNavigate: (personId: string) => void;
 }
 
-export function DetailPanel({ individual, gedcom, onClose }: DetailPanelProps) {
+export function DetailPanel({
+  individual,
+  gedcom,
+  onClose,
+  onNavigate,
+}: DetailPanelProps) {
   const spouseFamilies = individual.familyAsSpouse
     .map((famId) => gedcom.families.get(famId))
     .filter(Boolean);
@@ -58,7 +59,11 @@ export function DetailPanel({ individual, gedcom, onClose }: DetailPanelProps) {
 
       <h2 style={{ margin: "0 0 4px", fontSize: 18 }}>{individual.name}</h2>
       <div style={{ color: "#888", fontSize: 13, marginBottom: 16 }}>
-        {individual.sex === "M" ? "Male" : individual.sex === "F" ? "Female" : "Unknown"}
+        {individual.sex === "M"
+          ? "Male"
+          : individual.sex === "F"
+            ? "Female"
+            : "Unknown"}
       </div>
 
       {(individual.birthDate || individual.birthPlace) && (
@@ -84,6 +89,7 @@ export function DetailPanel({ individual, gedcom, onClose }: DetailPanelProps) {
           <ParentNames
             familyId={individual.familyAsChild}
             gedcom={gedcom}
+            onNavigate={onNavigate}
           />
         </Section>
       )}
@@ -101,7 +107,12 @@ export function DetailPanel({ individual, gedcom, onClose }: DetailPanelProps) {
               <div key={fam.id} style={{ marginBottom: 12 }}>
                 {spouse && (
                   <div>
-                    Spouse: {spouse.name}
+                    Spouse:{" "}
+                    <PersonLink
+                      id={spouse.id}
+                      name={spouse.name}
+                      onNavigate={onNavigate}
+                    />
                   </div>
                 )}
                 {fam.marriageDate && (
@@ -116,7 +127,11 @@ export function DetailPanel({ individual, gedcom, onClose }: DetailPanelProps) {
                       const child = gedcom.individuals.get(childId);
                       return (
                         <div key={childId} style={{ marginLeft: 8 }}>
-                          {child?.name || childId}
+                          <PersonLink
+                            id={childId}
+                            name={child?.name || childId}
+                            onNavigate={onNavigate}
+                          />
                         </div>
                       );
                     })}
@@ -149,6 +164,38 @@ export function DetailPanel({ individual, gedcom, onClose }: DetailPanelProps) {
   );
 }
 
+/**
+ * A clickable person name. Styled as a link to signal interactivity.
+ * We use a button with link-like styling rather than an <a> tag because
+ * there's no URL to navigate to — it's an in-app action.
+ */
+function PersonLink({
+  id,
+  name,
+  onNavigate,
+}: {
+  id: string;
+  name: string;
+  onNavigate: (id: string) => void;
+}) {
+  return (
+    <button
+      onClick={() => onNavigate(id)}
+      style={{
+        background: "none",
+        border: "none",
+        padding: 0,
+        color: "#4a90d9",
+        cursor: "pointer",
+        fontSize: "inherit",
+        textAlign: "left",
+      }}
+    >
+      {name}
+    </button>
+  );
+}
+
 function Section({
   title,
   children,
@@ -177,9 +224,11 @@ function Section({
 function ParentNames({
   familyId,
   gedcom,
+  onNavigate,
 }: {
   familyId: string;
   gedcom: GedcomData;
+  onNavigate: (id: string) => void;
 }) {
   const family = gedcom.families.get(familyId);
   if (!family) return null;
@@ -193,8 +242,24 @@ function ParentNames({
 
   return (
     <>
-      {father && <div>{father.name}</div>}
-      {mother && <div>{mother.name}</div>}
+      {father && (
+        <div>
+          <PersonLink
+            id={father.id}
+            name={father.name}
+            onNavigate={onNavigate}
+          />
+        </div>
+      )}
+      {mother && (
+        <div>
+          <PersonLink
+            id={mother.id}
+            name={mother.name}
+            onNavigate={onNavigate}
+          />
+        </div>
+      )}
     </>
   );
 }

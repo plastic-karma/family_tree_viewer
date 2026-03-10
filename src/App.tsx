@@ -8,15 +8,16 @@ import { buildFlowElements } from "./layout";
 import type { GedcomData } from "./parser/types";
 
 /**
- * App manages three pieces of state:
- * 1. gedcom: the parsed GEDCOM data (null before file upload)
- * 2. flowData: the React Flow nodes/edges derived from gedcom
- * 3. selectedId: which person node is currently selected (null = none)
+ * App manages the core state:
+ * - gedcom/flowData: parsed data + React Flow representation
+ * - selectedId: which person's detail panel is open
+ * - focusKey: triggers the "fly to node" animation in TreeViewer
  *
- * Previously we only stored flowData, but now we need gedcom too so the
- * DetailPanel can look up full individual details and resolve family
- * references. This is a common pattern: as features grow, you often need
- * to "promote" derived state back to source data.
+ * focusKey is a counter rather than just the node ID. This solves
+ * a subtle problem: if you navigate to person A, then to B, then back
+ * to A, the useEffect in FocusHandler wouldn't fire on the second visit
+ * to A because the dependency (selectedId) would be the same value.
+ * By incrementing a counter, we guarantee the effect always triggers.
  */
 function App() {
   const [gedcom, setGedcom] = useState<GedcomData | null>(null);
@@ -25,12 +26,18 @@ function App() {
     edges: Edge[];
   } | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [focusKey, setFocusKey] = useState(0);
 
   const handleFileLoaded = (content: string) => {
     const parsed = parseGedcom(content);
     setGedcom(parsed);
     const { nodes, edges } = buildFlowElements(parsed);
     setFlowData({ nodes, edges });
+  };
+
+  const navigateTo = (personId: string) => {
+    setSelectedId(personId);
+    setFocusKey((k) => k + 1);
   };
 
   if (!flowData || !gedcom) {
@@ -47,18 +54,19 @@ function App() {
         nodes={flowData.nodes}
         edges={flowData.edges}
         onNodeClick={(_event, node) => {
-          // Family junction nodes have type "default", not "person".
-          // We only want to open the detail panel for person nodes.
           if (node.type === "person") {
-            setSelectedId(node.id);
+            navigateTo(node.id);
           }
         }}
+        focusNodeId={selectedId}
+        focusKey={focusKey}
       />
       {selectedIndividual && (
         <DetailPanel
           individual={selectedIndividual}
           gedcom={gedcom}
           onClose={() => setSelectedId(null)}
+          onNavigate={navigateTo}
         />
       )}
     </>
