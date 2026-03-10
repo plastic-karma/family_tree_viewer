@@ -2,24 +2,14 @@ import type { Node, Edge } from "@xyflow/react";
 import type { GedcomData } from "./parser/types";
 import type { PersonNodeData } from "./components/PersonNode";
 
+export const PERSON_NODE_TYPE = "person";
+
 const NODE_WIDTH = 160;
 const NODE_HEIGHT = 80;
 const H_GAP = 40; // horizontal gap between nodes
 const V_GAP = 120; // vertical gap between generations
 const FAMILY_NODE_SIZE = 8; // small junction dot
 
-/**
- * Convert parsed GEDCOM data into React Flow nodes and edges.
- *
- * Layout strategy:
- * 1. Find "root" individuals (those with no parent family) — they're the top generation.
- * 2. BFS downward through families to assign each person a generation number.
- * 3. Place family junction nodes between parent and child generations.
- * 4. Space nodes horizontally within each generation.
- *
- * This is a simplified layout. A production genealogy app would use a proper
- * tree layout algorithm (like Buchheim's), but this gets us something visual quickly.
- */
 export function buildFlowElements(data: GedcomData): {
   nodes: Node[];
   edges: Edge[];
@@ -28,11 +18,8 @@ export function buildFlowElements(data: GedcomData): {
   const edges: Edge[] = [];
 
   // Step 1: Assign generations via BFS.
-  // We start from individuals who have no familyAsChild (roots of the tree),
-  // then walk down through families to assign increasing generation numbers.
-  const generationMap = new Map<string, number>(); // individual ID → generation
+  const generationMap = new Map<string, number>();
 
-  // Find roots: people who aren't children in any family
   const roots: string[] = [];
   for (const [id, indi] of data.individuals) {
     if (!indi.familyAsChild) {
@@ -40,36 +27,32 @@ export function buildFlowElements(data: GedcomData): {
     }
   }
 
-  // BFS to assign generations
+  // BFS using an index pointer instead of Array.shift().
+  // shift() is O(n) because it re-indexes every element; an index pointer is O(1).
   const queue: { id: string; gen: number }[] = roots.map((id) => ({
     id,
     gen: 0,
   }));
-  while (queue.length > 0) {
-    const { id, gen } = queue.shift()!;
+  let head = 0;
+  while (head < queue.length) {
+    const { id, gen } = queue[head++];
 
-    // If already visited at same or earlier generation, skip.
-    // If visited at a later generation, update (can happen when spouses
-    // are from different generations — we take the maximum).
     if (generationMap.has(id) && generationMap.get(id)! >= gen) continue;
     generationMap.set(id, gen);
 
     const indi = data.individuals.get(id);
     if (!indi) continue;
 
-    // Walk through families where this person is a parent
     for (const famId of indi.familyAsSpouse) {
       const fam = data.families.get(famId);
       if (!fam) continue;
 
-      // Ensure spouse is at the same generation
       const spouseId =
         fam.husbandId === id ? fam.wifeId : fam.husbandId;
       if (spouseId) {
         queue.push({ id: spouseId, gen });
       }
 
-      // Children are one generation below
       for (const childId of fam.childrenIds) {
         queue.push({ id: childId, gen: gen + 1 });
       }
@@ -90,10 +73,9 @@ export function buildFlowElements(data: GedcomData): {
     generations.get(gen)!.push(id);
   }
 
-  // Find the maximum generation so we can flip the Y axis:
-  // latest generation (highest number) goes at the top (y=0),
-  // oldest ancestors go at the bottom.
+  // Flip the Y axis: latest generation at the top, oldest at the bottom.
   const maxGen = Math.max(...generationMap.values(), 0);
+  const genToY = (gen: number) => (maxGen - gen) * (NODE_HEIGHT + V_GAP);
 
   // Step 3: Create person nodes with positions
   for (const [gen, ids] of generations) {
@@ -102,13 +84,12 @@ export function buildFlowElements(data: GedcomData): {
 
     ids.forEach((id, i) => {
       const indi = data.individuals.get(id)!;
-      const flippedGen = maxGen - gen;
       const node: Node<PersonNodeData> = {
         id,
-        type: "person",
+        type: PERSON_NODE_TYPE,
         position: {
           x: startX + i * (NODE_WIDTH + H_GAP),
-          y: flippedGen * (NODE_HEIGHT + V_GAP),
+          y: genToY(gen),
         },
         data: {
           label: indi.name || "Unknown",
@@ -121,21 +102,22 @@ export function buildFlowElements(data: GedcomData): {
     });
   }
 
+  // Build a lookup map for O(1) node access by ID.
+  // Without this, finding parent nodes for junction positioning would be
+  // O(nodes * families) — a linear scan per parent per family.
+  const nodeById = new Map<string, Node>(nodes.map((n) => [n.id, n]));
+
   // Step 4: Create family junction nodes and edges
   for (const [famId, fam] of data.families) {
-    // Determine the generation of the parents for vertical placement
     const parentIds = [fam.husbandId, fam.wifeId].filter(Boolean) as string[];
     if (parentIds.length === 0) continue;
 
     const parentGen = Math.max(
       ...parentIds.map((id) => generationMap.get(id) ?? 0)
     );
-    const flippedParentGen = maxGen - parentGen;
 
-    // Position the junction node between parent and child generations,
-    // horizontally centered between the parents.
     const parentNodes = parentIds
-      .map((id) => nodes.find((n) => n.id === id))
+      .map((id) => nodeById.get(id))
       .filter(Boolean);
     const avgX =
       parentNodes.length > 0
@@ -148,7 +130,7 @@ export function buildFlowElements(data: GedcomData): {
       type: "default",
       position: {
         x: avgX + NODE_WIDTH / 2 - FAMILY_NODE_SIZE / 2,
-        y: flippedParentGen * (NODE_HEIGHT + V_GAP) + NODE_HEIGHT + 20,
+        y: genToY(parentGen) + NODE_HEIGHT + 20,
       },
       data: { label: "" },
       style: {
@@ -165,7 +147,6 @@ export function buildFlowElements(data: GedcomData): {
     nodes.push(junctionNode);
 
     // Edges flow top→bottom visually (youngest→oldest).
-    // Children (top) → family junction → parents (bottom).
     for (const childId of fam.childrenIds) {
       edges.push({
         id: `${childId}-${famId}`,
@@ -175,7 +156,6 @@ export function buildFlowElements(data: GedcomData): {
       });
     }
 
-    // Family junction → parents
     for (const parentId of parentIds) {
       edges.push({
         id: `${famId}-${parentId}`,

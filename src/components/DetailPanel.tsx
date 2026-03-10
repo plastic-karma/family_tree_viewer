@@ -1,13 +1,5 @@
 import type { Individual, GedcomData } from "../parser/types";
 
-/**
- * Side panel showing details for a selected person.
- *
- * onNavigate is called when the user clicks a linked person name
- * (parent, spouse, or child). The parent component handles updating
- * the selection and telling React Flow to center on that node.
- */
-
 interface DetailPanelProps {
   individual: Individual;
   gedcom: GedcomData;
@@ -66,23 +58,17 @@ export function DetailPanel({
             : "Unknown"}
       </div>
 
-      {(individual.birthDate || individual.birthPlace) && (
-        <Section title="Birth">
-          {individual.birthDate && <div>{individual.birthDate}</div>}
-          {individual.birthPlace && (
-            <div style={{ color: "#666" }}>{individual.birthPlace}</div>
-          )}
-        </Section>
-      )}
+      <EventSection
+        title="Birth"
+        date={individual.birthDate}
+        place={individual.birthPlace}
+      />
 
-      {(individual.deathDate || individual.deathPlace) && (
-        <Section title="Death">
-          {individual.deathDate && <div>{individual.deathDate}</div>}
-          {individual.deathPlace && (
-            <div style={{ color: "#666" }}>{individual.deathPlace}</div>
-          )}
-        </Section>
-      )}
+      <EventSection
+        title="Death"
+        date={individual.deathDate}
+        place={individual.deathPlace}
+      />
 
       {individual.familyAsChild && (
         <Section title="Parents">
@@ -94,27 +80,14 @@ export function DetailPanel({
         </Section>
       )}
 
-      {individual.familyAsChild && (() => {
-        const parentFamily = gedcom.families.get(individual.familyAsChild!);
-        const siblings = parentFamily?.childrenIds
-          .filter((id) => id !== individual.id)
-          .map((id) => gedcom.individuals.get(id))
-          .filter(Boolean) ?? [];
-        if (siblings.length === 0) return null;
-        return (
-          <Section title="Siblings">
-            {siblings.map((sib) => (
-              <div key={sib!.id}>
-                <PersonLink
-                  id={sib!.id}
-                  name={sib!.name}
-                  onNavigate={onNavigate}
-                />
-              </div>
-            ))}
-          </Section>
-        );
-      })()}
+      {individual.familyAsChild && (
+        <Siblings
+          familyId={individual.familyAsChild}
+          individualId={individual.id}
+          gedcom={gedcom}
+          onNavigate={onNavigate}
+        />
+      )}
 
       {spouseFamilies.length > 0 && (
         <Section title="Families">
@@ -186,11 +159,6 @@ export function DetailPanel({
   );
 }
 
-/**
- * A clickable person name. Styled as a link to signal interactivity.
- * We use a button with link-like styling rather than an <a> tag because
- * there's no URL to navigate to — it's an in-app action.
- */
 function PersonLink({
   id,
   name,
@@ -240,6 +208,54 @@ function Section({
       </div>
       {children}
     </div>
+  );
+}
+
+function EventSection({
+  title,
+  date,
+  place,
+}: {
+  title: string;
+  date?: string;
+  place?: string;
+}) {
+  if (!date && !place) return null;
+  return (
+    <Section title={title}>
+      {date && <div>{date}</div>}
+      {place && <div style={{ color: "#666" }}>{place}</div>}
+    </Section>
+  );
+}
+
+function Siblings({
+  familyId,
+  individualId,
+  gedcom,
+  onNavigate,
+}: {
+  familyId: string;
+  individualId: string;
+  gedcom: GedcomData;
+  onNavigate: (id: string) => void;
+}) {
+  const family = gedcom.families.get(familyId);
+  const siblings = family?.childrenIds
+    .filter((id) => id !== individualId)
+    .map((id) => gedcom.individuals.get(id))
+    .filter((x): x is Individual => Boolean(x)) ?? [];
+
+  if (siblings.length === 0) return null;
+
+  return (
+    <Section title="Siblings">
+      {siblings.map((sib) => (
+        <div key={sib.id}>
+          <PersonLink id={sib.id} name={sib.name} onNavigate={onNavigate} />
+        </div>
+      ))}
+    </Section>
   );
 }
 

@@ -1,5 +1,5 @@
-import { useState, useRef, useEffect } from "react";
-import type { GedcomData } from "../parser/types";
+import { useState, useRef, useEffect, useMemo } from "react";
+import type { GedcomData, Individual } from "../parser/types";
 
 /**
  * Search-as-you-type component for finding individuals by name.
@@ -39,14 +39,18 @@ export function SearchBox({ gedcom, onSelect }: SearchBoxProps) {
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, []);
 
-  const results =
-    query.length >= 2
-      ? [...gedcom.individuals.values()]
-          .filter((indi) =>
-            indi.name.toLowerCase().includes(query.toLowerCase())
-          )
-          .slice(0, 10)
-      : [];
+  const results = useMemo(() => {
+    if (query.length < 2) return [];
+    const lowerQuery = query.toLowerCase();
+    const matches: Individual[] = [];
+    for (const indi of gedcom.individuals.values()) {
+      if (indi.name.toLowerCase().includes(lowerQuery)) {
+        matches.push(indi);
+        if (matches.length >= 10) break;
+      }
+    }
+    return matches;
+  }, [query, gedcom]);
 
   return (
     <div

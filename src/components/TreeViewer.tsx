@@ -11,6 +11,7 @@ import {
 import "@xyflow/react/dist/style.css";
 
 import { PersonNode } from "./PersonNode";
+import { PERSON_NODE_TYPE } from "../layout";
 
 /**
  * The main tree visualization component.
@@ -23,7 +24,7 @@ import { PersonNode } from "./PersonNode";
  * fitView automatically zooms/pans so all nodes are visible on mount.
  */
 
-const nodeTypes = { person: PersonNode };
+const nodeTypes = { [PERSON_NODE_TYPE]: PersonNode };
 
 interface TreeViewerProps {
   nodes: Node[];
