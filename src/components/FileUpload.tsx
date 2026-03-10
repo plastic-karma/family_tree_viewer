@@ -1,15 +1,11 @@
-import { useCallback, type DragEvent } from "react";
+import type { DragEvent } from "react";
 
 /**
  * A drag-and-drop file upload component.
  *
- * Key React concepts demonstrated:
- * - useCallback: memoizes the event handler so it doesn't get recreated on every
- *   render. This matters when passing callbacks as props to child components
- *   (prevents unnecessary re-renders), though here it's a minor optimization.
- * - Controlled vs uncontrolled: this component doesn't own state — it just calls
- *   onFileLoaded with the result. The parent decides what to do with the data.
- *   This is the "lifting state up" pattern.
+ * This component doesn't own state — it just calls onFileLoaded with the
+ * result. The parent decides what to do with the data. This is the
+ * "lifting state up" pattern.
  */
 
 interface FileUploadProps {
@@ -17,26 +13,20 @@ interface FileUploadProps {
 }
 
 export function FileUpload({ onFileLoaded }: FileUploadProps) {
-  const handleDrop = useCallback(
-    (e: DragEvent<HTMLDivElement>) => {
-      e.preventDefault();
-      const file = e.dataTransfer.files[0];
-      if (file) {
-        readFile(file, onFileLoaded);
-      }
-    },
-    [onFileLoaded]
-  );
+  const handleDrop = (e: DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    const file = e.dataTransfer.files[0];
+    if (file) {
+      readFile(file, onFileLoaded);
+    }
+  };
 
-  const handleFileInput = useCallback(
-    (e: React.ChangeEvent<HTMLInputElement>) => {
-      const file = e.target.files?.[0];
-      if (file) {
-        readFile(file, onFileLoaded);
-      }
-    },
-    [onFileLoaded]
-  );
+  const handleFileInput = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      readFile(file, onFileLoaded);
+    }
+  };
 
   return (
     <div

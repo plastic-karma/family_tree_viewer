@@ -4,6 +4,7 @@ import {
   Controls,
   type Node,
   type Edge,
+  type NodeMouseHandler,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 
@@ -31,15 +32,17 @@ const nodeTypes = { person: PersonNode };
 interface TreeViewerProps {
   nodes: Node[];
   edges: Edge[];
+  onNodeClick?: NodeMouseHandler;
 }
 
-export function TreeViewer({ nodes, edges }: TreeViewerProps) {
+export function TreeViewer({ nodes, edges, onNodeClick }: TreeViewerProps) {
   return (
     <div style={{ width: "100vw", height: "100vh" }}>
       <ReactFlow
         nodes={nodes}
         edges={edges}
         nodeTypes={nodeTypes}
+        onNodeClick={onNodeClick}
         fitView
         minZoom={0.01}
         maxZoom={2}
