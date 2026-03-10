@@ -94,6 +94,28 @@ export function DetailPanel({
         </Section>
       )}
 
+      {individual.familyAsChild && (() => {
+        const parentFamily = gedcom.families.get(individual.familyAsChild!);
+        const siblings = parentFamily?.childrenIds
+          .filter((id) => id !== individual.id)
+          .map((id) => gedcom.individuals.get(id))
+          .filter(Boolean) ?? [];
+        if (siblings.length === 0) return null;
+        return (
+          <Section title="Siblings">
+            {siblings.map((sib) => (
+              <div key={sib!.id}>
+                <PersonLink
+                  id={sib!.id}
+                  name={sib!.name}
+                  onNavigate={onNavigate}
+                />
+              </div>
+            ))}
+          </Section>
+        );
+      })()}
+
       {spouseFamilies.length > 0 && (
         <Section title="Families">
           {spouseFamilies.map((fam) => {
