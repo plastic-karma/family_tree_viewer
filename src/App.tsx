@@ -3,6 +3,7 @@ import type { Node, Edge } from "@xyflow/react";
 import { FileUpload } from "./components/FileUpload";
 import { TreeViewer } from "./components/TreeViewer";
 import { DetailPanel } from "./components/DetailPanel";
+import { SearchBox } from "./components/SearchBox";
 import { parseGedcom } from "./parser/gedcom";
 import { buildFlowElements } from "./layout";
 import type { GedcomData } from "./parser/types";
@@ -50,6 +51,7 @@ function App() {
 
   return (
     <>
+      <SearchBox gedcom={gedcom} onSelect={navigateTo} />
       <TreeViewer
         nodes={flowData.nodes}
         edges={flowData.edges}
