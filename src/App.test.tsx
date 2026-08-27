@@ -25,6 +25,7 @@ vi.mock("./components/TreeViewer", () => ({
       {nodes.map((node) => (
         <button
           key={node.id}
+          data-node-id={node.id}
           type="button"
           onClick={(event) => onNodeClick?.(event, node)}
         >
@@ -189,7 +190,7 @@ describe("App editing and relationship changes", () => {
 
       await clickButton(detailPanel, "Remove");
       expect(detailPanel.textContent).not.toContain("Existing Candidate");
-      expect(tree.textContent).toContain("Existing Candidate");
+      expect(tree.textContent).not.toContain("Existing Candidate");
 
       await clickButton(container, "Export GED");
       const relationshipExport = await exportedBlob?.text();
@@ -233,7 +234,7 @@ describe("App editing and relationship changes", () => {
       });
       await clickButton(childDialog, "Existing Child");
       expect(detailPanel.textContent).toContain("Existing Child");
-      expect(tree.textContent).toContain("child:@F2@:@I4@");
+      expect(tree.textContent).not.toContain("child:@F2@:@I4@");
 
       await clickButton(container, "Export GED");
       const additionsExport = await exportedBlob?.text();
@@ -278,7 +279,161 @@ describe("App editing and relationship changes", () => {
       });
     }
   });
+
+  it("shows only direct family after search or tree selection", async () => {
+    const source = `0 @I1@ INDI
+1 NAME Alex /Focus/
+0 @I2@ INDI
+1 NAME Parent /One/
+0 @I3@ INDI
+1 NAME Parent /Two/
+0 @I4@ INDI
+1 NAME Sam /Sibling/
+0 @I5@ INDI
+1 NAME Taylor /Spouse/
+0 @I6@ INDI
+1 NAME Casey /Child/
+0 @I7@ INDI
+1 NAME Unrelated /Person/
+0 @I8@ INDI
+1 NAME Sibling /Spouse/
+0 @I9@ INDI
+1 NAME Morgan /Ancestor/
+0 @I10@ INDI
+1 NAME Jordan /Aunt/
+0 @F1@ FAM
+1 HUSB @I2@
+1 WIFE @I3@
+1 CHIL @I1@
+1 CHIL @I4@
+0 @F2@ FAM
+1 HUSB @I1@
+1 WIFE @I5@
+1 CHIL @I6@
+0 @F3@ FAM
+1 HUSB @I9@
+1 CHIL @I2@
+1 CHIL @I10@
+0 @F4@ FAM
+1 HUSB @I4@
+1 WIFE @I8@
+0 TRLR`;
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+    const originalFileReader = globalThis.FileReader;
+
+    class ImmediateFileReader {
+      onload: ((event: { target: { result: string } }) => void) | null = null;
+      onerror: (() => void) | null = null;
+      onabort: (() => void) | null = null;
+
+      readAsText() {
+        this.onload?.({ target: { result: source } });
+      }
+    }
+
+    Object.defineProperty(globalThis, "FileReader", {
+      configurable: true,
+      value: ImmediateFileReader,
+    });
+
+    try {
+      await act(async () => root.render(<App />));
+      const fileInput = container.querySelector('input[type="file"]');
+      if (!(fileInput instanceof HTMLInputElement)) {
+        throw new Error("File input did not render");
+      }
+
+      Object.defineProperty(fileInput, "files", {
+        configurable: true,
+        value: [new File([source], "direct-family.ged")],
+      });
+      await act(async () => {
+        fileInput.dispatchEvent(new Event("change", { bubbles: true }));
+        await vi.waitFor(() => {
+          if (!container.querySelector('[data-testid="tree"]')) {
+            throw new Error("Tree has not rendered yet");
+          }
+        });
+      });
+
+      const tree = container.querySelector('[data-testid="tree"]');
+      const searchInput = container.querySelector(
+        'input[aria-label="Search people by name"]'
+      );
+      if (
+        !(tree instanceof HTMLElement) ||
+        !(searchInput instanceof HTMLInputElement)
+      ) {
+        throw new Error("Tree or search input did not render");
+      }
+
+      await act(async () => setInputValue(searchInput, "Alex"));
+      const searchResults = container.querySelector('[role="listbox"]');
+      if (!(searchResults instanceof HTMLElement)) {
+        throw new Error("Search results did not render");
+      }
+      await clickButton(searchResults, "Alex Focus");
+
+      expect(getTreeNodeIds(tree)).toEqual([
+        "@I1@",
+        "@I2@",
+        "@I3@",
+        "@I4@",
+        "@I5@",
+        "family:@F1@",
+        "family:@F2@",
+      ]);
+      expect(getTreeEdgeIds(tree)).toEqual([
+        "child:@F1@:@I1@",
+        "child:@F1@:@I4@",
+        "parent:@F1@:@I2@",
+        "parent:@F1@:@I3@",
+        "parent:@F2@:@I1@",
+        "parent:@F2@:@I5@",
+      ]);
+
+      await clickAriaButton(container, "Close details");
+      expect(getTreeNodeIds(tree)).toContain("@I6@");
+      expect(getTreeNodeIds(tree)).toContain("@I7@");
+      expect(getTreeNodeIds(tree)).toContain("@I8@");
+
+      await clickButton(tree, "Parent One");
+      expect(getTreeNodeIds(tree)).toEqual([
+        "@I10@",
+        "@I2@",
+        "@I3@",
+        "@I9@",
+        "family:@F1@",
+        "family:@F3@",
+      ]);
+      expect(getTreeNodeIds(tree)).not.toContain("@I1@");
+      expect(getTreeNodeIds(tree)).not.toContain("@I4@");
+    } finally {
+      await act(async () => root.unmount());
+      container.remove();
+      Object.defineProperty(globalThis, "FileReader", {
+        configurable: true,
+        value: originalFileReader,
+      });
+    }
+  });
 });
+
+function getTreeNodeIds(tree: Element): string[] {
+  return Array.from(
+    tree.querySelectorAll<HTMLElement>("[data-node-id]"),
+    (node) => node.dataset.nodeId!
+  ).sort();
+}
+
+function getTreeEdgeIds(tree: Element): string[] {
+  return Array.from(
+    tree.querySelectorAll<HTMLElement>('[data-testid="tree-edge"]'),
+    (edge) => edge.textContent ?? ""
+  ).sort();
+}
 
 function setInputValue(input: HTMLInputElement, value: string) {
   const valueSetter = Object.getOwnPropertyDescriptor(

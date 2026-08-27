@@ -12,6 +12,7 @@ Upload a `.ged` file and explore your family tree interactively — no backend r
 - **Editing and export** — update a person's name and birth date; link or unlink existing people as siblings, spouses, or children without deleting anyone; then download a GED file without dropping unrecognized source data
 - **Clickable navigation** — click any name in the detail panel to fly to that person
 - **Search** — find individuals by name with search-as-you-type, then navigate results with the arrow keys and Enter
+- **Direct-family focus** — selecting a person from the tree, details, or search hides everyone except that person, their siblings, spouses, and parents
 
 ## Getting Started
 

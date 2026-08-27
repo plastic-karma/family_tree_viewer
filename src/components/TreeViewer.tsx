@@ -32,6 +32,7 @@ interface TreeViewerProps {
   onNodeClick?: NodeMouseHandler;
   focusNodeId?: string | null;
   focusKey?: number;
+  focusAllNodes?: boolean;
 }
 
 export function TreeViewer({
@@ -40,6 +41,7 @@ export function TreeViewer({
   onNodeClick,
   focusNodeId,
   focusKey,
+  focusAllNodes = false,
 }: TreeViewerProps) {
   return (
     <div style={{ width: "100vw", height: "100vh" }}>
@@ -56,14 +58,18 @@ export function TreeViewer({
       >
         <Background />
         <Controls />
-        <FocusHandler focusNodeId={focusNodeId} focusKey={focusKey} />
+        <FocusHandler
+          focusNodeId={focusNodeId}
+          focusKey={focusKey}
+          focusAllNodes={focusAllNodes}
+        />
       </ReactFlow>
     </div>
   );
 }
 
 /**
- * Inner component that handles "fly to node" behavior.
+ * Inner component that handles viewport focus after selecting a person.
  *
  * This must be a child of <ReactFlow> because useReactFlow() only works
  * inside the React Flow provider. This is a common React pattern:
@@ -76,9 +82,11 @@ export function TreeViewer({
 function FocusHandler({
   focusNodeId,
   focusKey,
+  focusAllNodes,
 }: {
   focusNodeId?: string | null;
   focusKey?: number;
+  focusAllNodes: boolean;
 }) {
   const { fitView } = useReactFlow();
 
@@ -88,6 +96,15 @@ function FocusHandler({
     // Small delay to let React Flow process any state updates first.
     // Without this, fitView may run before the node positions are settled.
     const timeout = setTimeout(() => {
+      if (focusAllNodes) {
+        fitView({
+          duration: 500,
+          maxZoom: 1,
+          padding: 0.2,
+        });
+        return;
+      }
+
       fitView({
         nodes: [{ id: focusNodeId }],
         duration: 500,
@@ -96,7 +113,7 @@ function FocusHandler({
     }, 50);
 
     return () => clearTimeout(timeout);
-  }, [focusKey, focusNodeId, fitView]);
+  }, [focusAllNodes, focusKey, focusNodeId, fitView]);
 
   return null;
 }

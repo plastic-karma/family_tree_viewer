@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { FileUpload } from "./components/FileUpload";
 import { TreeViewer } from "./components/TreeViewer";
 import { DetailPanel } from "./components/DetailPanel";
@@ -14,8 +14,13 @@ import {
   removeSpouse,
 } from "./parser/gedcom";
 import { buildFlowElements, PERSON_NODE_TYPE } from "./layout";
+import { filterToDirectFamily } from "./filters";
 import type { FlowElements } from "./layout";
-import type { GedcomDocument, Individual } from "./parser/types";
+import type {
+  GedcomData,
+  GedcomDocument,
+  Individual,
+} from "./parser/types";
 
 function App() {
   const [gedcom, setGedcom] = useState<GedcomDocument | null>(null);
@@ -145,7 +150,12 @@ function App() {
     setUploadError(null);
   };
 
-  if (!flowData || !gedcom) {
+  const visibleFlowData = useMemo(() => {
+    if (!flowData || !gedcom || !selectedId) return flowData;
+    return buildDirectFamilyFlowElements(gedcom, flowData, selectedId);
+  }, [flowData, gedcom, selectedId]);
+
+  if (!visibleFlowData || !gedcom) {
     return (
       <FileUpload
         onFileLoaded={handleFileLoaded}
@@ -193,13 +203,14 @@ function App() {
         </button>
       </div>
       <TreeViewer
-        nodes={flowData.nodes}
-        edges={flowData.edges}
+        nodes={visibleFlowData.nodes}
+        edges={visibleFlowData.edges}
         onNodeClick={(_event, node) => {
           if (node.type === PERSON_NODE_TYPE) navigateTo(node.id);
         }}
         focusNodeId={selectedId}
         focusKey={focusKey}
+        focusAllNodes={selectedId !== null}
       />
       {selectedIndividual && (
         <DetailPanel
@@ -231,6 +242,33 @@ const toolbarButtonStyle = {
   color: "#213547",
   cursor: "pointer",
 } as const;
+
+function buildDirectFamilyFlowElements(
+  data: GedcomData,
+  fullFlowData: FlowElements,
+  personId: string
+): FlowElements {
+  const directFlowData = buildFlowElements(
+    filterToDirectFamily(data, personId)
+  );
+  const fullNodeById = new Map<
+    string,
+    FlowElements["nodes"][number]
+  >();
+  for (const node of fullFlowData.nodes) {
+    fullNodeById.set(node.id, node);
+  }
+
+  // Relationship filtering relays out the visible nodes. Keep their loaded
+  // labels so field-only edits retain the graph behavior described above.
+  for (const node of directFlowData.nodes) {
+    if (node.type !== PERSON_NODE_TYPE) continue;
+    const fullNode = fullNodeById.get(node.id);
+    if (fullNode) node.data = fullNode.data;
+  }
+
+  return directFlowData;
+}
 
 function downloadGedcomFile(content: string, sourceFileName: string | null) {
   const sourceStem = sourceFileName?.replace(/\.ged$/i, "") || "family-tree";
