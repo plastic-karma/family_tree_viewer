@@ -10,7 +10,7 @@ Upload a `.ged` file and explore your family tree interactively — no backend r
 - **Interactive tree** — pan, zoom, and click nodes to view details
 - **Detail panel** — shows birth/death, parents, spouses, children, and notes
 - **Clickable navigation** — click any name in the detail panel to fly to that person
-- **Search** — find individuals by name with search-as-you-type
+- **Search** — find individuals by name with search-as-you-type, then navigate results with the arrow keys and Enter
 
 ## Getting Started
 

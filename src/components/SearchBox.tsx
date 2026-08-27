@@ -1,4 +1,5 @@
-import { useState, useRef, useEffect, useMemo } from "react";
+import { useEffect, useId, useMemo, useRef, useState } from "react";
+import type { KeyboardEvent } from "react";
 import type { GedcomData, Individual } from "../parser/types";
 
 /**
@@ -22,6 +23,8 @@ export function SearchBox({ gedcom, onSelect }: SearchBoxProps) {
   const [query, setQuery] = useState("");
   const [isOpen, setIsOpen] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
+  const [activeIndex, setActiveIndex] = useState(-1);
+  const searchResultsId = useId();
 
   // Close dropdown when clicking outside.
   // This is a common pattern: register a document-level listener
@@ -33,6 +36,7 @@ export function SearchBox({ gedcom, onSelect }: SearchBoxProps) {
         !containerRef.current.contains(e.target as Node)
       ) {
         setIsOpen(false);
+        setActiveIndex(-1);
       }
     };
     document.addEventListener("mousedown", handleClickOutside);
@@ -53,6 +57,46 @@ export function SearchBox({ gedcom, onSelect }: SearchBoxProps) {
     return matches;
   }, [query, gedcom]);
 
+  const selectResult = (individual: Individual) => {
+    onSelect(individual.id);
+    setQuery("");
+    setIsOpen(false);
+    setActiveIndex(-1);
+  };
+
+  const handleKeyDown = (event: KeyboardEvent<HTMLInputElement>) => {
+    if (results.length === 0) return;
+
+    if (event.key === "ArrowDown") {
+      event.preventDefault();
+      setIsOpen(true);
+      setActiveIndex((current) =>
+        current >= results.length - 1 ? 0 : current + 1
+      );
+      return;
+    }
+
+    if (event.key === "ArrowUp") {
+      event.preventDefault();
+      setIsOpen(true);
+      setActiveIndex((current) =>
+        current <= 0 ? results.length - 1 : current - 1
+      );
+      return;
+    }
+
+    if (event.key === "Enter" && isOpen && activeIndex >= 0) {
+      event.preventDefault();
+      selectResult(results[activeIndex]);
+    }
+  };
+
+  const showResults = isOpen && results.length > 0;
+  const activeResultId =
+    showResults && activeIndex >= 0
+      ? `${searchResultsId}-option-${activeIndex}`
+      : undefined;
+
   return (
     <div
       ref={containerRef}
@@ -66,6 +110,11 @@ export function SearchBox({ gedcom, onSelect }: SearchBoxProps) {
     >
       <input
         type="search"
+        role="combobox"
+        aria-autocomplete="list"
+        aria-expanded={showResults}
+        aria-controls={showResults ? searchResultsId : undefined}
+        aria-activedescendant={activeResultId}
         aria-label="Search people by name"
         autoComplete="off"
         spellCheck={false}
@@ -75,10 +124,12 @@ export function SearchBox({ gedcom, onSelect }: SearchBoxProps) {
           const nextQuery = event.target.value;
           setQuery(nextQuery);
           setIsOpen(nextQuery.trim().length >= 2);
+          setActiveIndex(-1);
         }}
         onFocus={() => {
           if (query.trim().length >= 2) setIsOpen(true);
         }}
+        onKeyDown={handleKeyDown}
         style={{
           width: "100%",
           padding: "8px 12px",
@@ -89,8 +140,11 @@ export function SearchBox({ gedcom, onSelect }: SearchBoxProps) {
           outline: "none",
         }}
       />
-      {isOpen && results.length > 0 && (
+      {showResults && (
         <div
+          id={searchResultsId}
+          role="listbox"
+          aria-label="Search results"
           style={{
             marginTop: 4,
             background: "#fff",
@@ -100,32 +154,26 @@ export function SearchBox({ gedcom, onSelect }: SearchBoxProps) {
             overflow: "hidden",
           }}
         >
-          {results.map((indi) => (
+          {results.map((indi, index) => (
             <button
               type="button"
               key={indi.id}
-              onClick={() => {
-                onSelect(indi.id);
-                setQuery("");
-                setIsOpen(false);
-              }}
+              id={`${searchResultsId}-option-${index}`}
+              role="option"
+              aria-selected={index === activeIndex}
+              onClick={() => selectResult(indi)}
               style={{
                 display: "block",
                 width: "100%",
                 padding: "8px 12px",
                 border: "none",
-                background: "none",
+                background: index === activeIndex ? "#f5f5f5" : "none",
                 textAlign: "left",
                 cursor: "pointer",
                 fontSize: 13,
                 borderBottom: "1px solid #f0f0f0",
               }}
-              onMouseEnter={(e) => {
-                e.currentTarget.style.background = "#f5f5f5";
-              }}
-              onMouseLeave={(e) => {
-                e.currentTarget.style.background = "none";
-              }}
+              onMouseEnter={() => setActiveIndex(index)}
             >
               <div>{indi.name}</div>
               {indi.birthDate && (
