@@ -3,15 +3,20 @@ import { FileUpload } from "./components/FileUpload";
 import { TreeViewer } from "./components/TreeViewer";
 import { DetailPanel } from "./components/DetailPanel";
 import { SearchBox } from "./components/SearchBox";
-import { exportGedcom, parseGedcom } from "./parser/gedcom";
+import {
+  addSibling,
+  exportGedcom,
+  parseGedcom,
+  removeSibling,
+} from "./parser/gedcom";
 import { buildFlowElements, PERSON_NODE_TYPE } from "./layout";
 import type { FlowElements } from "./layout";
 import type { GedcomDocument, Individual } from "./parser/types";
 
 function App() {
   const [gedcom, setGedcom] = useState<GedcomDocument | null>(null);
-  // Field edits affect details, search, and export. The loaded graph stays
-  // unchanged until graph editing is introduced separately.
+  // Field edits leave the loaded graph labels unchanged. Relationship edits
+  // rebuild the graph because they add nodes and change family edges.
   const [flowData, setFlowData] = useState<FlowElements | null>(null);
   const [sourceFileName, setSourceFileName] = useState<string | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -51,6 +56,28 @@ function App() {
       individuals.set(personId, { ...individual, ...updates });
       return { ...current, individuals };
     });
+  };
+
+  const handleSiblingAdd = (
+    personId: string,
+    siblingId: string
+  ): boolean => {
+    if (!gedcom) return false;
+    const updated = addSibling(gedcom, personId, siblingId);
+    if (!updated) return false;
+
+    setGedcom(updated);
+    setFlowData(buildFlowElements(updated));
+    return true;
+  };
+
+  const handleSiblingRemove = (personId: string, siblingId: string) => {
+    if (!gedcom) return;
+    const updated = removeSibling(gedcom, personId, siblingId);
+    if (!updated) return;
+
+    setGedcom(updated);
+    setFlowData(buildFlowElements(updated));
   };
 
   const handleExport = () => {
@@ -131,6 +158,8 @@ function App() {
           onClose={() => setSelectedId(null)}
           onNavigate={navigateTo}
           onUpdate={handleIndividualUpdate}
+          onAddSibling={handleSiblingAdd}
+          onRemoveSibling={handleSiblingRemove}
         />
       )}
     </>

@@ -1,5 +1,10 @@
 import { describe, it, expect } from "vitest";
-import { exportGedcom, parseGedcom } from "./gedcom";
+import {
+  addSibling,
+  exportGedcom,
+  parseGedcom,
+  removeSibling,
+} from "./gedcom";
 
 describe("parseGedcom", () => {
   it("parses an empty string", () => {
@@ -444,5 +449,93 @@ describe("exportGedcom", () => {
     expect(
       parseGedcom(exported).individuals.get("@I1@")?.birthDate
     ).toBeUndefined();
+  });
+});
+
+describe("sibling editing", () => {
+  it("links existing people without creating individual records", () => {
+    const source = `0 HEAD
+1 SOUR ExistingApp
+0 @I1@ INDI
+1 NAME Selected /Person/
+1 _CUSTOM keep me
+0 @I2@ INDI
+1 NAME First /Sibling/
+1 BIRT
+2 DATE 2 FEB 1902
+0 @I3@ INDI
+1 NAME Second /Sibling/
+0 TRLR`;
+    const firstAddition = addSibling(
+      parseGedcom(source),
+      "@I1@",
+      "@I2@"
+    );
+    if (!firstAddition) throw new Error("Expected first sibling link");
+
+    const secondAddition = addSibling(firstAddition, "@I1@", "@I3@");
+    if (!secondAddition) throw new Error("Expected second sibling link");
+
+    const exported = exportGedcom(secondAddition);
+    const reparsed = parseGedcom(exported);
+    const familyId = reparsed.individuals.get("@I1@")?.familyAsChild;
+
+    expect(reparsed.individuals.size).toBe(3);
+    expect(familyId).toBe("@F1@");
+    expect(reparsed.families.get("@F1@")?.childrenIds).toEqual([
+      "@I1@",
+      "@I2@",
+      "@I3@",
+    ]);
+    expect(reparsed.individuals.get("@I2@")).toMatchObject({
+      name: "First Sibling",
+      birthDate: "2 FEB 1902",
+      familyAsChild: "@F1@",
+    });
+    expect(reparsed.individuals.get("@I3@")?.familyAsChild).toBe("@F1@");
+    expect(exported).toContain("1 _CUSTOM keep me");
+    expect(exported.match(/0 @I2@ INDI/g)).toHaveLength(1);
+  });
+
+  it("does not merge people from different parent families", () => {
+    const source = `0 @I1@ INDI
+1 NAME First /Person/
+1 FAMC @F1@
+0 @I2@ INDI
+1 NAME Second /Person/
+1 FAMC @F2@
+0 @F1@ FAM
+1 CHIL @I1@
+0 @F2@ FAM
+1 CHIL @I2@
+0 TRLR`;
+
+    expect(addSibling(parseGedcom(source), "@I1@", "@I2@")).toBeNull();
+  });
+
+  it("removes only the sibling relationship and preserves the person", () => {
+    const source = `0 @I1@ INDI
+1 NAME Selected /Person/
+1 FAMC @F1@
+0 @I2@ INDI
+1 NAME Other /Sibling/
+1 FAMC @F1@
+1 _CUSTOM keep sibling data
+0 @F1@ FAM
+1 CHIL @I1@
+1 CHIL @I2@
+0 TRLR`;
+    const updated = removeSibling(parseGedcom(source), "@I1@", "@I2@");
+    if (!updated) throw new Error("Expected sibling removal");
+
+    const exported = exportGedcom(updated);
+    const reparsed = parseGedcom(exported);
+
+    expect(reparsed.individuals.get("@I2@")).toMatchObject({
+      name: "Other Sibling",
+    });
+    expect(reparsed.individuals.get("@I2@")?.familyAsChild).toBeUndefined();
+    expect(reparsed.families.get("@F1@")?.childrenIds).toEqual(["@I1@"]);
+    expect(exported).toContain("1 _CUSTOM keep sibling data");
   });
 });

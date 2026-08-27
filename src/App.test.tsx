@@ -37,8 +37,8 @@ import App from "./App";
 
 Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
 
-describe("App editing and export", () => {
-  it("updates details and GED export without changing the loaded graph", async () => {
+describe("App editing and relationship changes", () => {
+  it("updates fields and sibling relationships in the graph and export", async () => {
     const source = `0 HEAD
 1 SOUR ExistingApp
 0 @I1@ INDI
@@ -47,6 +47,10 @@ describe("App editing and export", () => {
 1 BIRT
 2 DATE 1 JAN 1900
 1 _CUSTOM keep me
+0 @I2@ INDI
+1 NAME Existing /Candidate/
+1 SEX F
+1 _CUSTOM keep candidate data
 0 TRLR`;
     const container = document.createElement("div");
     document.body.appendChild(container);
@@ -133,7 +137,8 @@ describe("App editing and export", () => {
 
       expect(container.textContent).toContain("Jane Doe");
       expect(container.textContent).toContain("2 FEB 2001");
-      expect(tree.textContent).toBe("John Doe");
+      expect(tree.textContent).toContain("John Doe");
+      expect(tree.textContent).not.toContain("Jane Doe");
 
       await clickButton(container, "Export GED");
       expect(exportedName).toBe("relatives-updated.ged");
@@ -142,6 +147,43 @@ describe("App editing and export", () => {
       expect(exportedText).toContain("1 NAME Jane Doe");
       expect(exportedText).toContain("2 DATE 2 FEB 2001");
       expect(exportedText).toContain("1 _CUSTOM keep me");
+
+      await clickButton(container, "Add sibling");
+      const siblingSearchInput = container.querySelector(
+        'input[name="siblingSearch"]'
+      );
+      const siblingDialog = container.querySelector('[role="dialog"]');
+      if (
+        !(siblingSearchInput instanceof HTMLInputElement) ||
+        !(siblingDialog instanceof HTMLElement)
+      ) {
+        throw new Error("Sibling search dialog did not render");
+      }
+
+      await act(async () => {
+        setInputValue(siblingSearchInput, "Existing");
+      });
+      await clickButton(siblingDialog, "Existing Candidate");
+
+      const detailPanel = container.querySelector('[role="complementary"]');
+      if (!(detailPanel instanceof HTMLElement)) {
+        throw new Error("Detail panel did not remain open");
+      }
+      expect(detailPanel.textContent).toContain("Existing Candidate");
+      expect(tree.textContent).toContain("Existing Candidate");
+      expect(tree.textContent).toContain("Jane Doe");
+
+      await clickButton(detailPanel, "Remove");
+      expect(detailPanel.textContent).not.toContain("Existing Candidate");
+      expect(tree.textContent).toContain("Existing Candidate");
+
+      await clickButton(container, "Export GED");
+      const relationshipExport = await exportedBlob?.text();
+      expect(relationshipExport).toContain("0 @I2@ INDI");
+      expect(relationshipExport).toContain("1 NAME Existing /Candidate/");
+      expect(relationshipExport).toContain("1 _CUSTOM keep candidate data");
+      expect(relationshipExport).not.toContain("1 CHIL @I2@");
+      expect(relationshipExport?.match(/0 @I\d+@ INDI/g)).toHaveLength(2);
     } finally {
       await act(async () => root.unmount());
       container.remove();

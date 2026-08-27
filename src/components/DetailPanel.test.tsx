@@ -62,6 +62,8 @@ describe("DetailPanel", () => {
         onClose={() => undefined}
         onNavigate={() => undefined}
         onUpdate={() => undefined}
+        onAddSibling={() => true}
+        onRemoveSibling={() => undefined}
       />
     );
 
@@ -111,6 +113,8 @@ describe("DetailPanel", () => {
         onClose={() => undefined}
         onNavigate={() => undefined}
         onUpdate={() => undefined}
+        onAddSibling={() => true}
+        onRemoveSibling={() => undefined}
       />
     );
 
@@ -150,6 +154,8 @@ describe("DetailPanel", () => {
             onUpdate={(personId, values) =>
               updates.push({ personId, values })
             }
+            onAddSibling={() => true}
+            onRemoveSibling={() => undefined}
           />
         );
       });
@@ -179,6 +185,102 @@ describe("DetailPanel", () => {
         },
       ]);
       expect(container.textContent).toContain("Selected Person");
+    } finally {
+      await act(async () => root.unmount());
+      container.remove();
+    }
+  });
+
+  it("searches existing people for sibling additions and removes links", async () => {
+    const selected: Individual = {
+      id: "@I1@",
+      name: "Selected Person",
+      sex: "U",
+      familyAsSpouse: [],
+      familyAsChild: "@F1@",
+      notes: [],
+    };
+    const sibling: Individual = {
+      id: "@I2@",
+      name: "Existing Sibling",
+      sex: "U",
+      familyAsSpouse: [],
+      familyAsChild: "@F1@",
+      notes: [],
+    };
+    const candidate: Individual = {
+      id: "@I3@",
+      name: "Available Person",
+      sex: "U",
+      familyAsSpouse: [],
+      notes: [],
+    };
+    const data: GedcomData = {
+      individuals: new Map([
+        [selected.id, selected],
+        [sibling.id, sibling],
+        [candidate.id, candidate],
+      ]),
+      families: new Map([
+        [
+          "@F1@",
+          {
+            id: "@F1@",
+            childrenIds: [selected.id, sibling.id],
+          },
+        ],
+      ]),
+    };
+    const additions: Array<{ personId: string; siblingId: string }> = [];
+    const removals: Array<{ personId: string; siblingId: string }> = [];
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+
+    try {
+      await act(async () => {
+        root.render(
+          <DetailPanel
+            individual={selected}
+            gedcom={data}
+            onClose={() => undefined}
+            onNavigate={() => undefined}
+            onUpdate={() => undefined}
+            onAddSibling={(personId, siblingId) => {
+              additions.push({ personId, siblingId });
+              return true;
+            }}
+            onRemoveSibling={(personId, siblingId) =>
+              removals.push({ personId, siblingId })
+            }
+          />
+        );
+      });
+
+      await clickButton(container, "Add sibling");
+      const dialog = container.querySelector('[role="dialog"]');
+      const searchInput = container.querySelector(
+        'input[name="siblingSearch"]'
+      );
+      if (
+        !(dialog instanceof HTMLElement) ||
+        !(searchInput instanceof HTMLInputElement)
+      ) {
+        throw new Error("Sibling search dialog did not render");
+      }
+      expect(dialog.textContent).toContain("Add existing sibling");
+      expect(container.querySelector('input[name="siblingName"]')).toBeNull();
+
+      await act(async () => setInputValue(searchInput, "Available"));
+      await clickButton(dialog, "Available Person");
+      await clickButton(container, "Remove");
+
+      expect(additions).toEqual([
+        { personId: "@I1@", siblingId: "@I3@" },
+      ]);
+      expect(removals).toEqual([
+        { personId: "@I1@", siblingId: "@I2@" },
+      ]);
     } finally {
       await act(async () => root.unmount());
       container.remove();

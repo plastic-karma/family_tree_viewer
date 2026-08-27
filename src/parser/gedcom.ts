@@ -219,6 +219,112 @@ export function parseGedcom(text: string): GedcomDocument {
   return { individuals, families, sourceText: text };
 }
 
+export function addSibling(
+  document: GedcomDocument,
+  individualId: string,
+  siblingId: string
+): GedcomDocument | null {
+  if (individualId === siblingId) return null;
+
+  const individual = document.individuals.get(individualId);
+  const sibling = document.individuals.get(siblingId);
+  if (!individual || !sibling) return null;
+
+  const individualFamily = individual.familyAsChild
+    ? document.families.get(individual.familyAsChild)
+    : undefined;
+  const siblingFamily = sibling.familyAsChild
+    ? document.families.get(sibling.familyAsChild)
+    : undefined;
+  if (
+    individualFamily &&
+    siblingFamily &&
+    individualFamily.id !== siblingFamily.id
+  ) {
+    return null;
+  }
+
+  const existingFamily = individualFamily ?? siblingFamily;
+  const familyId = existingFamily?.id ?? nextFamilyXref(document);
+  const individualWasChild =
+    existingFamily?.childrenIds.includes(individualId) ?? false;
+  const siblingWasChild =
+    existingFamily?.childrenIds.includes(siblingId) ?? false;
+  if (individualWasChild && siblingWasChild) return null;
+
+  const childrenIds = existingFamily
+    ? [...existingFamily.childrenIds]
+    : [];
+  if (!individualWasChild) childrenIds.push(individualId);
+  if (!siblingWasChild) childrenIds.push(siblingId);
+  const family: Family = existingFamily
+    ? { ...existingFamily, childrenIds }
+    : { id: familyId, childrenIds };
+
+  const individuals = new Map(document.individuals);
+  if (individual.familyAsChild !== familyId) {
+    individuals.set(individualId, { ...individual, familyAsChild: familyId });
+  }
+  if (sibling.familyAsChild !== familyId) {
+    individuals.set(siblingId, { ...sibling, familyAsChild: familyId });
+  }
+
+  const families = new Map(document.families);
+  families.set(familyId, family);
+
+  return {
+    ...document,
+    individuals,
+    families,
+    sourceText: linkSiblingsInSource(
+      document.sourceText,
+      individual,
+      sibling,
+      family
+    ),
+  };
+}
+
+export function removeSibling(
+  document: GedcomDocument,
+  individualId: string,
+  siblingId: string
+): GedcomDocument | null {
+  if (individualId === siblingId) return null;
+
+  const individual = document.individuals.get(individualId);
+  const sibling = document.individuals.get(siblingId);
+  const familyId = individual?.familyAsChild;
+  if (!individual || !sibling || !familyId) return null;
+
+  const family = document.families.get(familyId);
+  if (!family || !family.childrenIds.includes(siblingId)) return null;
+
+  const families = new Map(document.families);
+  families.set(familyId, {
+    ...family,
+    childrenIds: family.childrenIds.filter((id) => id !== siblingId),
+  });
+
+  let individuals = document.individuals;
+  if (sibling.familyAsChild === familyId) {
+    individuals = new Map(document.individuals);
+    individuals.set(siblingId, { ...sibling, familyAsChild: undefined });
+  }
+
+  return {
+    ...document,
+    individuals,
+    families,
+    sourceText: removeSiblingFromSource(
+      document.sourceText,
+      familyId,
+      siblingId
+    ),
+  };
+}
+
+
 interface GedcomSourceLine {
   content: string;
   ending: string;
@@ -231,7 +337,7 @@ interface ParsedGedcomSourceLine {
   value: string;
 }
 
-interface IndividualRecord {
+interface GedcomRecord {
   id: string;
   start: number;
   end: number;
@@ -245,10 +351,11 @@ interface SourceEdit {
 }
 
 /**
- * Export the current editable fields into the original GEDCOM document.
+ * Export editable fields into the document's current source snapshot.
  *
- * Unknown records and tags remain byte-for-byte unchanged. Only NAME and
- * BIRT.DATE values whose parsed values changed are rewritten.
+ * Relationship edits update that snapshot when they are applied. Unknown
+ * records and tags remain byte-for-byte unchanged; this pass rewrites only
+ * NAME and BIRT.DATE values whose parsed values changed.
  */
 export function exportGedcom(document: GedcomDocument): string {
   const lines = splitGedcomSource(document.sourceText);
@@ -306,8 +413,8 @@ function parseGedcomSourceLine(
 
 function findIndividualRecords(
   lines: GedcomSourceLine[]
-): IndividualRecord[] {
-  const records: IndividualRecord[] = [];
+): GedcomRecord[] {
+  const records: GedcomRecord[] = [];
 
   for (let start = 0; start < lines.length; start += 1) {
     const line = parseGedcomSourceLine(lines[start]);
@@ -328,7 +435,7 @@ function findIndividualRecords(
 
 function updateIndividualRecord(
   lines: GedcomSourceLine[],
-  record: IndividualRecord,
+  record: GedcomRecord,
   individual: Individual,
   defaultEnding: string
 ) {
@@ -505,4 +612,209 @@ function insertSourceLines(
           : "",
     }))
   );
+}
+
+function nextFamilyXref(document: GedcomDocument): string {
+  const used = new Set<string>();
+  for (const id of document.individuals.keys()) used.add(id);
+  for (const id of document.families.keys()) used.add(id);
+  for (const match of document.sourceText.matchAll(/@[^@\s]+@/g)) {
+    used.add(match[0]);
+  }
+
+  let sequence = 1;
+  while (used.has(`@F${sequence}@`)) sequence += 1;
+  return `@F${sequence}@`;
+}
+
+function linkSiblingsInSource(
+  sourceText: string,
+  individual: Individual,
+  sibling: Individual,
+  family: Family
+): string {
+  const lines = splitGedcomSource(sourceText);
+  const defaultEnding =
+    lines.find((line) => line.ending !== "")?.ending ?? "\n";
+
+  if (individual.familyAsChild !== family.id) {
+    setFamilyAsChildReference(
+      lines,
+      individual.id,
+      family.id,
+      defaultEnding
+    );
+  }
+  if (sibling.familyAsChild !== family.id) {
+    setFamilyAsChildReference(
+      lines,
+      sibling.id,
+      family.id,
+      defaultEnding
+    );
+  }
+
+  const familyRecord = findGedcomRecord(lines, "FAM", family.id);
+  if (familyRecord) {
+    const existingChildren = new Set<string>();
+    for (
+      let index = familyRecord.start + 1;
+      index < familyRecord.end;
+      index += 1
+    ) {
+      const line = parseGedcomSourceLine(lines[index]);
+      if (line?.level === 1 && line.tag === "CHIL") {
+        existingChildren.add(line.value);
+      }
+    }
+
+    const childLines: string[] = [];
+    if (!existingChildren.has(individual.id)) {
+      childLines.push(`1 CHIL ${individual.id}`);
+    }
+    if (!existingChildren.has(sibling.id)) {
+      childLines.push(`1 CHIL ${sibling.id}`);
+    }
+    insertSourceLines(lines, familyRecord.end, childLines, defaultEnding);
+  } else {
+    insertSourceLines(
+      lines,
+      findTrailerIndex(lines),
+      serializeFamilyRecord(family),
+      defaultEnding
+    );
+  }
+
+  return lines.map((line) => line.content + line.ending).join("");
+}
+
+function removeSiblingFromSource(
+  sourceText: string,
+  familyId: string,
+  siblingId: string
+): string {
+  const lines = splitGedcomSource(sourceText);
+  const removals: number[] = [];
+  const familyRecord = findGedcomRecord(lines, "FAM", familyId);
+  const siblingRecord = findGedcomRecord(lines, "INDI", siblingId);
+
+  if (familyRecord) {
+    for (
+      let index = familyRecord.start + 1;
+      index < familyRecord.end;
+      index += 1
+    ) {
+      const line = parseGedcomSourceLine(lines[index]);
+      if (
+        line?.level === 1 &&
+        line.tag === "CHIL" &&
+        line.value === siblingId
+      ) {
+        removals.push(index);
+      }
+    }
+  }
+
+  if (siblingRecord) {
+    for (
+      let index = siblingRecord.start + 1;
+      index < siblingRecord.end;
+      index += 1
+    ) {
+      const line = parseGedcomSourceLine(lines[index]);
+      if (
+        line?.level === 1 &&
+        line.tag === "FAMC" &&
+        line.value === familyId
+      ) {
+        removals.push(index);
+      }
+    }
+  }
+
+  removals.sort((left, right) => right - left);
+  for (const index of removals) removeSourceLine(lines, index);
+  return lines.map((line) => line.content + line.ending).join("");
+}
+
+function findGedcomRecord(
+  lines: GedcomSourceLine[],
+  tag: "INDI" | "FAM",
+  id: string
+): GedcomRecord | undefined {
+  for (let start = 0; start < lines.length; start += 1) {
+    const line = parseGedcomSourceLine(lines[start]);
+    if (
+      line?.level !== 0 ||
+      line.tag !== tag ||
+      line.xref !== id
+    ) {
+      continue;
+    }
+
+    let end = start + 1;
+    while (end < lines.length) {
+      if (parseGedcomSourceLine(lines[end])?.level === 0) break;
+      end += 1;
+    }
+    return { id, start, end };
+  }
+  return undefined;
+}
+
+function setFamilyAsChildReference(
+  lines: GedcomSourceLine[],
+  individualId: string,
+  familyId: string,
+  defaultEnding: string
+) {
+  const record = findGedcomRecord(lines, "INDI", individualId);
+  if (!record) return;
+
+  let lastReference: number | null = null;
+  for (let index = record.start + 1; index < record.end; index += 1) {
+    const line = parseGedcomSourceLine(lines[index]);
+    if (line?.level === 1 && line.tag === "FAMC") {
+      lastReference = index;
+    }
+  }
+
+  if (lastReference !== null) {
+    lines[lastReference].content = `1 FAMC ${familyId}`;
+  } else {
+    insertSourceLines(
+      lines,
+      record.end,
+      [`1 FAMC ${familyId}`],
+      defaultEnding
+    );
+  }
+}
+
+
+function serializeFamilyRecord(family: Family): string[] {
+  const lines = [`0 ${family.id} FAM`];
+  if (family.husbandId) lines.push(`1 HUSB ${family.husbandId}`);
+  if (family.wifeId) lines.push(`1 WIFE ${family.wifeId}`);
+  if (family.marriageDate || family.marriagePlace) {
+    lines.push("1 MARR");
+    if (family.marriageDate) {
+      lines.push(`2 DATE ${cleanGedcomValue(family.marriageDate)}`);
+    }
+    if (family.marriagePlace) {
+      lines.push(`2 PLAC ${cleanGedcomValue(family.marriagePlace)}`);
+    }
+  }
+  for (const childId of family.childrenIds) {
+    lines.push(`1 CHIL ${childId}`);
+  }
+  return lines;
+}
+
+function findTrailerIndex(lines: GedcomSourceLine[]): number {
+  const trailerIndex = lines.findIndex((line) => {
+    const parsed = parseGedcomSourceLine(line);
+    return parsed?.level === 0 && parsed.tag === "TRLR";
+  });
+  return trailerIndex === -1 ? lines.length : trailerIndex;
 }
