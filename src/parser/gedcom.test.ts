@@ -1,9 +1,13 @@
 import { describe, it, expect } from "vitest";
 import {
+  addChild,
   addSibling,
+  addSpouse,
   exportGedcom,
   parseGedcom,
+  removeChild,
   removeSibling,
+  removeSpouse,
 } from "./gedcom";
 
 describe("parseGedcom", () => {
@@ -537,5 +541,157 @@ describe("sibling editing", () => {
     expect(reparsed.individuals.get("@I2@")?.familyAsChild).toBeUndefined();
     expect(reparsed.families.get("@F1@")?.childrenIds).toEqual(["@I1@"]);
     expect(exported).toContain("1 _CUSTOM keep sibling data");
+  });
+});
+
+describe("spouse editing", () => {
+  it("links an existing spouse into an open parent family", () => {
+    const source = `0 @I1@ INDI
+1 NAME Existing /Parent/
+1 SEX M
+1 FAMS @F7@
+0 @I2@ INDI
+1 NAME Added /Spouse/
+1 SEX F
+1 _CUSTOM keep spouse data
+0 @I3@ INDI
+1 NAME Existing /Child/
+1 FAMC @F7@
+0 @F7@ FAM
+1 HUSB @I1@
+1 CHIL @I3@
+1 _CUSTOM keep family data
+0 TRLR`;
+    const updated = addSpouse(parseGedcom(source), "@I1@", "@I2@");
+    if (!updated) throw new Error("Expected spouse addition");
+
+    const exported = exportGedcom(updated);
+    const reparsed = parseGedcom(exported);
+
+    expect(reparsed.individuals.size).toBe(3);
+    expect(reparsed.individuals.get("@I1@")?.familyAsSpouse).toEqual([
+      "@F7@",
+    ]);
+    expect(reparsed.individuals.get("@I2@")?.familyAsSpouse).toEqual([
+      "@F7@",
+    ]);
+    expect(reparsed.families.get("@F7@")).toMatchObject({
+      husbandId: "@I1@",
+      wifeId: "@I2@",
+      childrenIds: ["@I3@"],
+    });
+    expect(exported).toContain("1 _CUSTOM keep spouse data");
+    expect(exported).toContain("1 _CUSTOM keep family data");
+    expect(exported.match(/0 @I2@ INDI/g)).toHaveLength(1);
+  });
+
+  it("removes only the spouse link and keeps shared children", () => {
+    const source = `0 @I1@ INDI
+1 NAME Selected /Parent/
+1 FAMS @F1@
+0 @I2@ INDI
+1 NAME Former /Spouse/
+1 FAMS @F1@
+1 _CUSTOM keep this person
+0 @I3@ INDI
+1 NAME Shared /Child/
+1 FAMC @F1@
+0 @F1@ FAM
+1 HUSB @I1@
+1 WIFE @I2@
+1 CHIL @I3@
+1 _CUSTOM keep family metadata
+0 TRLR`;
+    const updated = removeSpouse(
+      parseGedcom(source),
+      "@I1@",
+      "@I2@"
+    );
+    if (!updated) throw new Error("Expected spouse removal");
+
+    const exported = exportGedcom(updated);
+    const reparsed = parseGedcom(exported);
+
+    expect(reparsed.individuals.get("@I2@")).toMatchObject({
+      name: "Former Spouse",
+      familyAsSpouse: [],
+    });
+    expect(reparsed.families.get("@F1@")).toMatchObject({
+      husbandId: "@I1@",
+      childrenIds: ["@I3@"],
+    });
+    expect(reparsed.families.get("@F1@")?.wifeId).toBeUndefined();
+    expect(reparsed.individuals.get("@I3@")?.familyAsChild).toBe("@F1@");
+    expect(exported).toContain("1 _CUSTOM keep this person");
+    expect(exported).toContain("1 _CUSTOM keep family metadata");
+  });
+});
+
+describe("child editing", () => {
+  it("links an existing child to a selected parent family", () => {
+    const source = `0 @I1@ INDI
+1 NAME First /Parent/
+1 SEX M
+1 FAMS @F1@
+0 @I2@ INDI
+1 NAME Second /Parent/
+1 SEX F
+1 FAMS @F1@
+0 @I3@ INDI
+1 NAME Added /Child/
+1 _CUSTOM keep child data
+0 @F1@ FAM
+1 HUSB @I1@
+1 WIFE @I2@
+0 TRLR`;
+    const updated = addChild(
+      parseGedcom(source),
+      "@I1@",
+      "@I3@",
+      "@F1@"
+    );
+    if (!updated) throw new Error("Expected child addition");
+
+    const exported = exportGedcom(updated);
+    const reparsed = parseGedcom(exported);
+
+    expect(reparsed.individuals.size).toBe(3);
+    expect(reparsed.individuals.get("@I3@")?.familyAsChild).toBe("@F1@");
+    expect(reparsed.families.get("@F1@")?.childrenIds).toEqual(["@I3@"]);
+    expect(exported).toContain("1 _CUSTOM keep child data");
+    expect(exported.match(/0 @I3@ INDI/g)).toHaveLength(1);
+  });
+
+  it("creates a parent family and removes only the child link", () => {
+    const source = `0 @I1@ INDI
+1 NAME Solo /Parent/
+1 SEX F
+0 @I2@ INDI
+1 NAME Existing /Child/
+1 _CUSTOM preserve me
+0 TRLR`;
+    const addition = addChild(parseGedcom(source), "@I1@", "@I2@");
+    if (!addition) throw new Error("Expected child addition");
+
+    const addedExport = exportGedcom(addition);
+    const added = parseGedcom(addedExport);
+    expect(added.families.get("@F1@")).toMatchObject({
+      wifeId: "@I1@",
+      childrenIds: ["@I2@"],
+    });
+    expect(added.individuals.get("@I1@")?.familyAsSpouse).toEqual(["@F1@"]);
+    expect(added.individuals.get("@I2@")?.familyAsChild).toBe("@F1@");
+
+    const removal = removeChild(addition, "@I1@", "@I2@", "@F1@");
+    if (!removal) throw new Error("Expected child removal");
+
+    const removedExport = exportGedcom(removal);
+    const removed = parseGedcom(removedExport);
+    expect(removed.individuals.get("@I2@")).toMatchObject({
+      name: "Existing Child",
+    });
+    expect(removed.individuals.get("@I2@")?.familyAsChild).toBeUndefined();
+    expect(removed.families.get("@F1@")?.childrenIds).toEqual([]);
+    expect(removedExport).toContain("1 _CUSTOM preserve me");
   });
 });

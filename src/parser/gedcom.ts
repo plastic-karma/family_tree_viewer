@@ -325,6 +325,303 @@ export function removeSibling(
 }
 
 
+
+export function addSpouse(
+  document: GedcomDocument,
+  individualId: string,
+  spouseId: string,
+  familyId?: string
+): GedcomDocument | null {
+  if (individualId === spouseId) return null;
+
+  const individual = document.individuals.get(individualId);
+  const spouse = document.individuals.get(spouseId);
+  if (!individual || !spouse) return null;
+
+  for (const family of document.families.values()) {
+    if (
+      familyIncludesSpouse(family, individualId) &&
+      familyIncludesSpouse(family, spouseId)
+    ) {
+      return null;
+    }
+  }
+
+  let existingFamily: Family | undefined;
+  if (familyId !== undefined) {
+    const requestedFamily = document.families.get(familyId);
+    if (
+      !requestedFamily ||
+      !familyIncludesSpouse(requestedFamily, individualId) ||
+      (requestedFamily.husbandId !== undefined &&
+        requestedFamily.wifeId !== undefined)
+    ) {
+      return null;
+    }
+    existingFamily = requestedFamily;
+  } else {
+    let openFamilyCount = 0;
+    for (const family of document.families.values()) {
+      const hasOpenRole =
+        (family.husbandId === individualId &&
+          family.wifeId === undefined) ||
+        (family.wifeId === individualId &&
+          family.husbandId === undefined);
+      if (!hasOpenRole) continue;
+
+      existingFamily = family;
+      openFamilyCount += 1;
+      if (openFamilyCount > 1) {
+        existingFamily = undefined;
+        break;
+      }
+    }
+  }
+
+  const targetFamilyId = existingFamily?.id ?? nextFamilyXref(document);
+  let family: Family;
+  if (existingFamily?.husbandId === individualId) {
+    family = { ...existingFamily, wifeId: spouseId };
+  } else if (existingFamily?.wifeId === individualId) {
+    family = { ...existingFamily, husbandId: spouseId };
+  } else {
+    family = createFamilyForSpouses(
+      targetFamilyId,
+      individual,
+      spouse
+    );
+  }
+
+  const individuals = new Map(document.individuals);
+  const linkedIndividual = addFamilyAsSpouse(individual, targetFamilyId);
+  const linkedSpouse = addFamilyAsSpouse(spouse, targetFamilyId);
+  if (linkedIndividual !== individual) {
+    individuals.set(individualId, linkedIndividual);
+  }
+  if (linkedSpouse !== spouse) {
+    individuals.set(spouseId, linkedSpouse);
+  }
+
+  const families = new Map(document.families);
+  families.set(targetFamilyId, family);
+
+  return {
+    ...document,
+    individuals,
+    families,
+    sourceText: linkSpousesInSource(
+      document.sourceText,
+      individualId,
+      spouseId,
+      family
+    ),
+  };
+}
+
+export function removeSpouse(
+  document: GedcomDocument,
+  individualId: string,
+  spouseId: string,
+  familyId?: string
+): GedcomDocument | null {
+  if (individualId === spouseId) return null;
+
+  const individual = document.individuals.get(individualId);
+  const spouse = document.individuals.get(spouseId);
+  if (!individual || !spouse) return null;
+
+  let targetFamily: Family | undefined;
+  if (familyId !== undefined) {
+    const requestedFamily = document.families.get(familyId);
+    if (
+      !requestedFamily ||
+      !familyIncludesSpouse(requestedFamily, individualId) ||
+      !familyIncludesSpouse(requestedFamily, spouseId)
+    ) {
+      return null;
+    }
+    targetFamily = requestedFamily;
+  } else {
+    for (const family of document.families.values()) {
+      if (
+        !familyIncludesSpouse(family, individualId) ||
+        !familyIncludesSpouse(family, spouseId)
+      ) {
+        continue;
+      }
+      if (targetFamily) return null;
+      targetFamily = family;
+    }
+  }
+  if (!targetFamily) return null;
+
+  const family =
+    targetFamily.husbandId === spouseId
+      ? { ...targetFamily, husbandId: undefined }
+      : { ...targetFamily, wifeId: undefined };
+  const families = new Map(document.families);
+  families.set(family.id, family);
+
+  let individuals = document.individuals;
+  if (spouse.familyAsSpouse.includes(family.id)) {
+    individuals = new Map(document.individuals);
+    individuals.set(spouseId, {
+      ...spouse,
+      familyAsSpouse: spouse.familyAsSpouse.filter((id) => id !== family.id),
+    });
+  }
+
+  return {
+    ...document,
+    individuals,
+    families,
+    sourceText: removeSpouseFromSource(
+      document.sourceText,
+      family.id,
+      spouseId
+    ),
+  };
+}
+
+export function addChild(
+  document: GedcomDocument,
+  parentId: string,
+  childId: string,
+  familyId?: string
+): GedcomDocument | null {
+  if (parentId === childId) return null;
+
+  const parent = document.individuals.get(parentId);
+  const child = document.individuals.get(childId);
+  if (!parent || !child) return null;
+
+  let existingFamily: Family | undefined;
+  if (familyId !== undefined) {
+    const requestedFamily = document.families.get(familyId);
+    if (
+      !requestedFamily ||
+      !familyIncludesSpouse(requestedFamily, parentId)
+    ) {
+      return null;
+    }
+    existingFamily = requestedFamily;
+  } else {
+    for (const family of document.families.values()) {
+      if (!familyIncludesSpouse(family, parentId)) continue;
+      if (existingFamily) return null;
+      existingFamily = family;
+    }
+  }
+
+  const targetFamilyId = existingFamily?.id ?? nextFamilyXref(document);
+  const baseFamily =
+    existingFamily ?? createFamilyForParent(targetFamilyId, parent);
+  if (familyIncludesSpouse(baseFamily, childId)) return null;
+
+  const resolvedChildFamily = child.familyAsChild
+    ? document.families.get(child.familyAsChild)
+    : undefined;
+  if (
+    resolvedChildFamily &&
+    resolvedChildFamily.id !== targetFamilyId
+  ) {
+    return null;
+  }
+
+  for (const family of document.families.values()) {
+    if (!family.childrenIds.includes(childId)) continue;
+    if (family.id !== targetFamilyId) return null;
+    return null;
+  }
+
+  const family: Family = {
+    ...baseFamily,
+    childrenIds: [...baseFamily.childrenIds, childId],
+  };
+  const families = new Map(document.families);
+  families.set(targetFamilyId, family);
+
+  const individuals = new Map(document.individuals);
+  const linkedParent = addFamilyAsSpouse(parent, targetFamilyId);
+  if (linkedParent !== parent) individuals.set(parentId, linkedParent);
+  if (child.familyAsChild !== targetFamilyId) {
+    individuals.set(childId, { ...child, familyAsChild: targetFamilyId });
+  }
+
+  return {
+    ...document,
+    individuals,
+    families,
+    sourceText: linkChildInSource(
+      document.sourceText,
+      parentId,
+      childId,
+      family
+    ),
+  };
+}
+
+export function removeChild(
+  document: GedcomDocument,
+  parentId: string,
+  childId: string,
+  familyId?: string
+): GedcomDocument | null {
+  if (parentId === childId) return null;
+
+  const parent = document.individuals.get(parentId);
+  const child = document.individuals.get(childId);
+  if (!parent || !child) return null;
+
+  let targetFamily: Family | undefined;
+  if (familyId !== undefined) {
+    const requestedFamily = document.families.get(familyId);
+    if (
+      !requestedFamily ||
+      !familyIncludesSpouse(requestedFamily, parentId) ||
+      !requestedFamily.childrenIds.includes(childId)
+    ) {
+      return null;
+    }
+    targetFamily = requestedFamily;
+  } else {
+    for (const family of document.families.values()) {
+      if (
+        !familyIncludesSpouse(family, parentId) ||
+        !family.childrenIds.includes(childId)
+      ) {
+        continue;
+      }
+      if (targetFamily) return null;
+      targetFamily = family;
+    }
+  }
+  if (!targetFamily) return null;
+
+  const families = new Map(document.families);
+  families.set(targetFamily.id, {
+    ...targetFamily,
+    childrenIds: targetFamily.childrenIds.filter((id) => id !== childId),
+  });
+
+  let individuals = document.individuals;
+  if (child.familyAsChild === targetFamily.id) {
+    individuals = new Map(document.individuals);
+    individuals.set(childId, { ...child, familyAsChild: undefined });
+  }
+
+  return {
+    ...document,
+    individuals,
+    families,
+    sourceText: removeSiblingFromSource(
+      document.sourceText,
+      targetFamily.id,
+      childId
+    ),
+  };
+}
+
 interface GedcomSourceLine {
   content: string;
   ending: string;
@@ -626,6 +923,222 @@ function nextFamilyXref(document: GedcomDocument): string {
   while (used.has(`@F${sequence}@`)) sequence += 1;
   return `@F${sequence}@`;
 }
+
+function familyIncludesSpouse(family: Family, individualId: string): boolean {
+  return (
+    family.husbandId === individualId || family.wifeId === individualId
+  );
+}
+
+function addFamilyAsSpouse(
+  individual: Individual,
+  familyId: string
+): Individual {
+  if (individual.familyAsSpouse.includes(familyId)) return individual;
+  return {
+    ...individual,
+    familyAsSpouse: [...individual.familyAsSpouse, familyId],
+  };
+}
+
+function createFamilyForSpouses(
+  familyId: string,
+  individual: Individual,
+  spouse: Individual
+): Family {
+  const individualIsWife =
+    individual.sex === "F" ||
+    (individual.sex === "U" && spouse.sex === "M");
+  return individualIsWife
+    ? {
+        id: familyId,
+        husbandId: spouse.id,
+        wifeId: individual.id,
+        childrenIds: [],
+      }
+    : {
+        id: familyId,
+        husbandId: individual.id,
+        wifeId: spouse.id,
+        childrenIds: [],
+      };
+}
+
+function createFamilyForParent(
+  familyId: string,
+  parent: Individual
+): Family {
+  return parent.sex === "F"
+    ? { id: familyId, wifeId: parent.id, childrenIds: [] }
+    : { id: familyId, husbandId: parent.id, childrenIds: [] };
+}
+
+function linkSpousesInSource(
+  sourceText: string,
+  individualId: string,
+  spouseId: string,
+  family: Family
+): string {
+  const lines = splitGedcomSource(sourceText);
+  const defaultEnding =
+    lines.find((line) => line.ending !== "")?.ending ?? "\n";
+
+  setFamilyAsSpouseReference(
+    lines,
+    individualId,
+    family.id,
+    defaultEnding
+  );
+  setFamilyAsSpouseReference(lines, spouseId, family.id, defaultEnding);
+  ensureFamilySourceRecord(lines, family, defaultEnding);
+
+  return lines.map((line) => line.content + line.ending).join("");
+}
+
+function removeSpouseFromSource(
+  sourceText: string,
+  familyId: string,
+  spouseId: string
+): string {
+  const lines = splitGedcomSource(sourceText);
+  const removals: number[] = [];
+  const familyRecord = findGedcomRecord(lines, "FAM", familyId);
+  const spouseRecord = findGedcomRecord(lines, "INDI", spouseId);
+
+  if (familyRecord) {
+    for (
+      let index = familyRecord.start + 1;
+      index < familyRecord.end;
+      index += 1
+    ) {
+      const line = parseGedcomSourceLine(lines[index]);
+      if (
+        line?.level === 1 &&
+        (line.tag === "HUSB" || line.tag === "WIFE") &&
+        line.value === spouseId
+      ) {
+        removals.push(index);
+      }
+    }
+  }
+
+  if (spouseRecord) {
+    for (
+      let index = spouseRecord.start + 1;
+      index < spouseRecord.end;
+      index += 1
+    ) {
+      const line = parseGedcomSourceLine(lines[index]);
+      if (
+        line?.level === 1 &&
+        line.tag === "FAMS" &&
+        line.value === familyId
+      ) {
+        removals.push(index);
+      }
+    }
+  }
+
+  removals.sort((left, right) => right - left);
+  for (const index of removals) removeSourceLine(lines, index);
+  return lines.map((line) => line.content + line.ending).join("");
+}
+
+function linkChildInSource(
+  sourceText: string,
+  parentId: string,
+  childId: string,
+  family: Family
+): string {
+  const lines = splitGedcomSource(sourceText);
+  const defaultEnding =
+    lines.find((line) => line.ending !== "")?.ending ?? "\n";
+
+  setFamilyAsSpouseReference(lines, parentId, family.id, defaultEnding);
+  setFamilyAsChildReference(lines, childId, family.id, defaultEnding);
+  ensureFamilySourceRecord(lines, family, defaultEnding);
+
+  return lines.map((line) => line.content + line.ending).join("");
+}
+
+function setFamilyAsSpouseReference(
+  lines: GedcomSourceLine[],
+  individualId: string,
+  familyId: string,
+  defaultEnding: string
+) {
+  const record = findGedcomRecord(lines, "INDI", individualId);
+  if (!record) return;
+
+  for (let index = record.start + 1; index < record.end; index += 1) {
+    const line = parseGedcomSourceLine(lines[index]);
+    if (
+      line?.level === 1 &&
+      line.tag === "FAMS" &&
+      line.value === familyId
+    ) {
+      return;
+    }
+  }
+
+  insertSourceLines(
+    lines,
+    record.end,
+    [`1 FAMS ${familyId}`],
+    defaultEnding
+  );
+}
+
+function ensureFamilySourceRecord(
+  lines: GedcomSourceLine[],
+  family: Family,
+  defaultEnding: string
+) {
+  const record = findGedcomRecord(lines, "FAM", family.id);
+  if (!record) {
+    insertSourceLines(
+      lines,
+      findTrailerIndex(lines),
+      serializeFamilyRecord(family),
+      defaultEnding
+    );
+    return;
+  }
+
+  const existingLinks = new Set<string>();
+  for (let index = record.start + 1; index < record.end; index += 1) {
+    const line = parseGedcomSourceLine(lines[index]);
+    if (
+      line?.level === 1 &&
+      (line.tag === "HUSB" ||
+        line.tag === "WIFE" ||
+        line.tag === "CHIL")
+    ) {
+      existingLinks.add(`${line.tag}\u0000${line.value}`);
+    }
+  }
+
+  const additions: string[] = [];
+  if (
+    family.husbandId &&
+    !existingLinks.has(`HUSB\u0000${family.husbandId}`)
+  ) {
+    additions.push(`1 HUSB ${family.husbandId}`);
+  }
+  if (
+    family.wifeId &&
+    !existingLinks.has(`WIFE\u0000${family.wifeId}`)
+  ) {
+    additions.push(`1 WIFE ${family.wifeId}`);
+  }
+  for (const childId of family.childrenIds) {
+    if (!existingLinks.has(`CHIL\u0000${childId}`)) {
+      additions.push(`1 CHIL ${childId}`);
+    }
+  }
+  insertSourceLines(lines, record.end, additions, defaultEnding);
+}
+
 
 function linkSiblingsInSource(
   sourceText: string,

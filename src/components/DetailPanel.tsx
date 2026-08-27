@@ -12,6 +12,26 @@ interface DetailPanelProps {
   ) => void;
   onAddSibling: (personId: string, siblingId: string) => boolean;
   onRemoveSibling: (personId: string, siblingId: string) => void;
+  onAddSpouse: (
+    personId: string,
+    spouseId: string,
+    familyId?: string
+  ) => boolean;
+  onRemoveSpouse: (
+    personId: string,
+    spouseId: string,
+    familyId?: string
+  ) => void;
+  onAddChild: (
+    parentId: string,
+    childId: string,
+    familyId?: string
+  ) => boolean;
+  onRemoveChild: (
+    parentId: string,
+    childId: string,
+    familyId?: string
+  ) => void;
 }
 
 export function DetailPanel({
@@ -22,6 +42,10 @@ export function DetailPanel({
   onUpdate,
   onAddSibling,
   onRemoveSibling,
+  onAddSpouse,
+  onRemoveSpouse,
+  onAddChild,
+  onRemoveChild,
 }: DetailPanelProps) {
   const [isEditing, setIsEditing] = useState(false);
   const [draftName, setDraftName] = useState(individual.name);
@@ -212,64 +236,16 @@ export function DetailPanel({
         onRemoveSibling={onRemoveSibling}
       />
 
-      {spouseFamilies.length > 0 && (
-        <Section title="Families">
-          {spouseFamilies.map((family) => {
-            const spouseId =
-              family.husbandId === individual.id
-                ? family.wifeId
-                : family.husbandId;
-            const spouse =
-              spouseId && spouseId !== individual.id
-                ? gedcom.individuals.get(spouseId)
-                : undefined;
-
-            return (
-              <div key={family.id} style={{ marginBottom: 12 }}>
-                {spouse && (
-                  <div>
-                    Spouse:{" "}
-                    <PersonLink
-                      id={spouse.id}
-                      name={spouse.name || spouse.id}
-                      onNavigate={onNavigate}
-                    />
-                  </div>
-                )}
-                {(family.marriageDate || family.marriagePlace) && (
-                  <div style={{ color: "#666", fontSize: 12 }}>
-                    {family.marriageDate && (
-                      <div>Married {family.marriageDate}</div>
-                    )}
-                    {family.marriagePlace && <div>{family.marriagePlace}</div>}
-                  </div>
-                )}
-                {family.childrenIds.length > 0 && (
-                  <div style={{ marginTop: 4 }}>
-                    <div style={{ fontSize: 12, color: "#888" }}>Children:</div>
-                    {family.childrenIds.map((childId) => {
-                      const child = gedcom.individuals.get(childId);
-                      return (
-                        <div key={childId} style={{ marginLeft: 8 }}>
-                          {child ? (
-                            <PersonLink
-                              id={child.id}
-                              name={child.name || child.id}
-                              onNavigate={onNavigate}
-                            />
-                          ) : (
-                            <span>{childId}</span>
-                          )}
-                        </div>
-                      );
-                    })}
-                  </div>
-                )}
-              </div>
-            );
-          })}
-        </Section>
-      )}
+      <Families
+        individualId={individual.id}
+        families={spouseFamilies}
+        gedcom={gedcom}
+        onNavigate={onNavigate}
+        onAddSpouse={onAddSpouse}
+        onRemoveSpouse={onRemoveSpouse}
+        onAddChild={onAddChild}
+        onRemoveChild={onRemoveChild}
+      />
 
       {individual.notes.length > 0 && (
         <Section title="Notes">
@@ -364,6 +340,261 @@ function EventSection({
   );
 }
 
+function Families({
+  individualId,
+  families,
+  gedcom,
+  onNavigate,
+  onAddSpouse,
+  onRemoveSpouse,
+  onAddChild,
+  onRemoveChild,
+}: {
+  individualId: string;
+  families: Family[];
+  gedcom: GedcomData;
+  onNavigate: (id: string) => void;
+  onAddSpouse: (
+    personId: string,
+    spouseId: string,
+    familyId?: string
+  ) => boolean;
+  onRemoveSpouse: (
+    personId: string,
+    spouseId: string,
+    familyId?: string
+  ) => void;
+  onAddChild: (
+    parentId: string,
+    childId: string,
+    familyId?: string
+  ) => boolean;
+  onRemoveChild: (
+    parentId: string,
+    childId: string,
+    familyId?: string
+  ) => void;
+}) {
+  const [searchTarget, setSearchTarget] = useState<{
+    relationship: "spouse" | "child";
+    familyId?: string;
+  } | null>(null);
+  const allFamiliesHaveSpouses = families.every((family) => {
+    const spouseId =
+      family.husbandId === individualId
+        ? family.wifeId
+        : family.husbandId;
+    return spouseId !== undefined && spouseId !== individualId;
+  });
+
+  const addExistingPerson = (personId: string): boolean => {
+    if (!searchTarget) return false;
+
+    const added =
+      searchTarget.relationship === "spouse"
+        ? onAddSpouse(individualId, personId, searchTarget.familyId)
+        : onAddChild(individualId, personId, searchTarget.familyId);
+    if (added) setSearchTarget(null);
+    return added;
+  };
+
+  return (
+    <Section title="Families">
+      {families.map((family) => {
+        const spouseId =
+          family.husbandId === individualId
+            ? family.wifeId
+            : family.husbandId;
+        const spouse =
+          spouseId && spouseId !== individualId
+            ? gedcom.individuals.get(spouseId)
+            : undefined;
+
+        return (
+          <div
+            key={family.id}
+            style={{
+              marginBottom: 12,
+              paddingBottom: 12,
+              borderBottom: "1px solid #eee",
+            }}
+          >
+            {spouseId && spouseId !== individualId ? (
+              <div
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "space-between",
+                  gap: 8,
+                }}
+              >
+                <div>
+                  Spouse:{" "}
+                  {spouse ? (
+                    <PersonLink
+                      id={spouse.id}
+                      name={spouse.name || spouse.id}
+                      onNavigate={onNavigate}
+                    />
+                  ) : (
+                    <span>{spouseId}</span>
+                  )}
+                </div>
+                {spouse && (
+                  <button
+                    type="button"
+                    aria-label={`Remove ${spouse.name || spouse.id} as spouse`}
+                    onClick={() =>
+                      onRemoveSpouse(individualId, spouse.id, family.id)
+                    }
+                    style={{
+                      ...editButtonStyle,
+                      padding: "2px 6px",
+                      color: "#b42318",
+                      fontSize: 11,
+                    }}
+                  >
+                    Remove
+                  </button>
+                )}
+              </div>
+            ) : (
+              <button
+                type="button"
+                onClick={() =>
+                  setSearchTarget({
+                    relationship: "spouse",
+                    familyId: family.id,
+                  })
+                }
+                style={editButtonStyle}
+              >
+                Add spouse
+              </button>
+            )}
+
+            {(family.marriageDate || family.marriagePlace) && (
+              <div style={{ color: "#666", fontSize: 12, marginTop: 4 }}>
+                {family.marriageDate && (
+                  <div>Married {family.marriageDate}</div>
+                )}
+                {family.marriagePlace && <div>{family.marriagePlace}</div>}
+              </div>
+            )}
+
+            <div style={{ marginTop: 8 }}>
+              <div style={{ fontSize: 12, color: "#888", marginBottom: 2 }}>
+                Children:
+              </div>
+              {family.childrenIds.map((childId) => {
+                const child = gedcom.individuals.get(childId);
+                return (
+                  <div
+                    key={childId}
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "space-between",
+                      gap: 8,
+                      margin: "0 0 4px 8px",
+                    }}
+                  >
+                    {child ? (
+                      <PersonLink
+                        id={child.id}
+                        name={child.name || child.id}
+                        onNavigate={onNavigate}
+                      />
+                    ) : (
+                      <span>{childId}</span>
+                    )}
+                    {child && (
+                      <button
+                        type="button"
+                        aria-label={`Remove ${child.name || child.id} as child`}
+                        onClick={() =>
+                          onRemoveChild(
+                            individualId,
+                            child.id,
+                            family.id
+                          )
+                        }
+                        style={{
+                          ...editButtonStyle,
+                          padding: "2px 6px",
+                          color: "#b42318",
+                          fontSize: 11,
+                        }}
+                      >
+                        Remove
+                      </button>
+                    )}
+                  </div>
+                );
+              })}
+              <button
+                type="button"
+                onClick={() =>
+                  setSearchTarget({
+                    relationship: "child",
+                    familyId: family.id,
+                  })
+                }
+                style={{
+                  ...editButtonStyle,
+                  marginTop: family.childrenIds.length > 0 ? 4 : 0,
+                }}
+              >
+                Add child
+              </button>
+            </div>
+          </div>
+        );
+      })}
+
+      {families.length === 0 && (
+        <div style={{ color: "#666", fontSize: 13, marginBottom: 8 }}>
+          No spouse or children linked.
+        </div>
+      )}
+
+      <div style={{ display: "flex", gap: 8 }}>
+        {(families.length === 0 || allFamiliesHaveSpouses) && (
+          <button
+            type="button"
+            onClick={() =>
+              setSearchTarget({ relationship: "spouse" })
+            }
+            style={editButtonStyle}
+          >
+            Add spouse
+          </button>
+        )}
+        {families.length === 0 && (
+          <button
+            type="button"
+            onClick={() => setSearchTarget({ relationship: "child" })}
+            style={editButtonStyle}
+          >
+            Add child
+          </button>
+        )}
+      </div>
+
+      {searchTarget && (
+        <RelationshipSearchDialog
+          relationship={searchTarget.relationship}
+          individualId={individualId}
+          familyId={searchTarget.familyId}
+          gedcom={gedcom}
+          onClose={() => setSearchTarget(null)}
+          onSelect={addExistingPerson}
+        />
+      )}
+    </Section>
+  );
+}
+
 function Siblings({
   familyId,
   individualId,
@@ -436,7 +667,8 @@ function Siblings({
       </button>
 
       {isSearchOpen && (
-        <SiblingSearchDialog
+        <RelationshipSearchDialog
+          relationship="sibling"
           individualId={individualId}
           gedcom={gedcom}
           onClose={() => setIsSearchOpen(false)}
@@ -447,58 +679,179 @@ function Siblings({
   );
 }
 
-function SiblingSearchDialog({
+type EditableRelationship = "sibling" | "spouse" | "child";
+
+const relationshipSearchCopy: Record<
+  EditableRelationship,
+  {
+    title: string;
+    inputName: string;
+    closeLabel: string;
+    searchLabel: string;
+    resultsLabel: string;
+    failureMessage: string;
+  }
+> = {
+  sibling: {
+    title: "Add existing sibling",
+    inputName: "siblingSearch",
+    closeLabel: "Close sibling search",
+    searchLabel: "Search existing people by name",
+    resultsLabel: "Sibling search results",
+    failureMessage: "That person could not be linked as a sibling.",
+  },
+  spouse: {
+    title: "Add existing spouse",
+    inputName: "spouseSearch",
+    closeLabel: "Close spouse search",
+    searchLabel: "Search existing people to add as a spouse",
+    resultsLabel: "Spouse search results",
+    failureMessage: "That person could not be linked as a spouse.",
+  },
+  child: {
+    title: "Add existing child",
+    inputName: "childSearch",
+    closeLabel: "Close child search",
+    searchLabel: "Search existing people to add as a child",
+    resultsLabel: "Child search results",
+    failureMessage: "That person could not be linked as a child.",
+  },
+};
+
+function unavailableRelationshipReason(
+  relationship: EditableRelationship,
+  individualId: string,
+  candidate: Individual,
+  gedcom: GedcomData,
+  familyId?: string
+): string | null {
+  if (relationship === "spouse") return null;
+
+  const individual = gedcom.individuals.get(individualId);
+  if (relationship === "sibling") {
+    const selectedFamily = individual?.familyAsChild
+      ? gedcom.families.get(individual.familyAsChild)
+      : undefined;
+    const candidateFamily = candidate.familyAsChild
+      ? gedcom.families.get(candidate.familyAsChild)
+      : undefined;
+    return selectedFamily &&
+      candidateFamily &&
+      selectedFamily.id !== candidateFamily.id
+      ? "Already belongs to another parent family"
+      : null;
+  }
+
+  const targetFamily = familyId
+    ? gedcom.families.get(familyId)
+    : undefined;
+  if (
+    targetFamily &&
+    (targetFamily.husbandId === candidate.id ||
+      targetFamily.wifeId === candidate.id)
+  ) {
+    return "Already a parent in this family";
+  }
+
+  const candidateFamily = candidate.familyAsChild
+    ? gedcom.families.get(candidate.familyAsChild)
+    : undefined;
+  if (
+    candidateFamily &&
+    (!targetFamily || candidateFamily.id !== targetFamily.id)
+  ) {
+    return "Already belongs to another parent family";
+  }
+  for (const family of gedcom.families.values()) {
+    if (
+      family.childrenIds.includes(candidate.id) &&
+      (!targetFamily || family.id !== targetFamily.id)
+    ) {
+      return "Already belongs to another parent family";
+    }
+  }
+  return null;
+}
+
+function RelationshipSearchDialog({
+  relationship,
   individualId,
+  familyId,
   gedcom,
   onClose,
   onSelect,
 }: {
+  relationship: EditableRelationship;
   individualId: string;
+  familyId?: string;
   gedcom: GedcomData;
   onClose: () => void;
-  onSelect: (siblingId: string) => boolean;
+  onSelect: (personId: string) => boolean;
 }) {
   const [query, setQuery] = useState("");
   const [selectionError, setSelectionError] = useState<string | null>(null);
   const titleId = useId();
   const searchInputId = useId();
   const normalizedQuery = query.trim().toLowerCase();
+  const copy = relationshipSearchCopy[relationship];
   const results = useMemo(() => {
     if (normalizedQuery.length < 2) return [];
 
+    const linkedIds = new Set<string>();
     const individual = gedcom.individuals.get(individualId);
-    const selectedFamily = individual?.familyAsChild
-      ? gedcom.families.get(individual.familyAsChild)
-      : undefined;
-    const currentFamilyIds = new Set(selectedFamily?.childrenIds ?? []);
+    if (relationship === "sibling") {
+      const selectedFamily = individual?.familyAsChild
+        ? gedcom.families.get(individual.familyAsChild)
+        : undefined;
+      for (const id of selectedFamily?.childrenIds ?? []) {
+        linkedIds.add(id);
+      }
+    } else if (relationship === "spouse") {
+      for (const family of gedcom.families.values()) {
+        if (family.husbandId === individualId && family.wifeId) {
+          linkedIds.add(family.wifeId);
+        } else if (family.wifeId === individualId && family.husbandId) {
+          linkedIds.add(family.husbandId);
+        }
+      }
+    } else if (familyId) {
+      const family = gedcom.families.get(familyId);
+      for (const id of family?.childrenIds ?? []) linkedIds.add(id);
+    }
+
     const matches: Array<{
       individual: Individual;
-      unavailable: boolean;
+      unavailableReason: string | null;
     }> = [];
-
     for (const candidate of gedcom.individuals.values()) {
       if (
         candidate.id === individualId ||
-        currentFamilyIds.has(candidate.id) ||
+        linkedIds.has(candidate.id) ||
         !candidate.name.toLowerCase().includes(normalizedQuery)
       ) {
         continue;
       }
 
-      const candidateFamily = candidate.familyAsChild
-        ? gedcom.families.get(candidate.familyAsChild)
-        : undefined;
       matches.push({
         individual: candidate,
-        unavailable:
-          selectedFamily !== undefined &&
-          candidateFamily !== undefined &&
-          selectedFamily.id !== candidateFamily.id,
+        unavailableReason: unavailableRelationshipReason(
+          relationship,
+          individualId,
+          candidate,
+          gedcom,
+          familyId
+        ),
       });
       if (matches.length === 10) break;
     }
     return matches;
-  }, [gedcom, individualId, normalizedQuery]);
+  }, [
+    familyId,
+    gedcom,
+    individualId,
+    normalizedQuery,
+    relationship,
+  ]);
 
   return (
     <div
@@ -537,11 +890,11 @@ function SiblingSearchDialog({
         }}
       >
         <h2 id={titleId} style={{ margin: "0 36px 16px 0", fontSize: 18 }}>
-          Add existing sibling
+          {copy.title}
         </h2>
         <button
           type="button"
-          aria-label="Close sibling search"
+          aria-label={copy.closeLabel}
           onClick={onClose}
           style={{
             position: "absolute",
@@ -562,9 +915,9 @@ function SiblingSearchDialog({
         </label>
         <input
           id={searchInputId}
-          name="siblingSearch"
+          name={copy.inputName}
           type="search"
-          aria-label="Search existing people by name"
+          aria-label={copy.searchLabel}
           autoComplete="off"
           spellCheck={false}
           autoFocus
@@ -586,48 +939,49 @@ function SiblingSearchDialog({
             No matching people available.
           </p>
         ) : (
-          <div role="listbox" aria-label="Sibling search results">
-            {results.map(({ individual, unavailable }) => (
-              <button
-                key={individual.id}
-                type="button"
-                role="option"
-                aria-selected="false"
-                aria-disabled={unavailable}
-                disabled={unavailable}
-                onClick={() => {
-                  if (!onSelect(individual.id)) {
-                    setSelectionError(
-                      "That person could not be linked as a sibling."
-                    );
-                  }
-                }}
-                style={{
-                  display: "block",
-                  width: "100%",
-                  padding: "8px 10px",
-                  border: "none",
-                  borderBottom: "1px solid #f0f0f0",
-                  background: "none",
-                  color: unavailable ? "#999" : "inherit",
-                  textAlign: "left",
-                  cursor: unavailable ? "not-allowed" : "pointer",
-                  fontSize: 13,
-                }}
-              >
-                <div>{individual.name || individual.id}</div>
-                {individual.birthDate && (
-                  <div style={{ fontSize: 11, color: "#888" }}>
-                    b. {individual.birthDate}
-                  </div>
-                )}
-                {unavailable && (
-                  <div style={{ fontSize: 11 }}>
-                    Already belongs to another parent family
-                  </div>
-                )}
-              </button>
-            ))}
+          <div role="listbox" aria-label={copy.resultsLabel}>
+            {results.map(({ individual, unavailableReason }) => {
+              const unavailable = unavailableReason !== null;
+              return (
+                <button
+                  key={individual.id}
+                  type="button"
+                  role="option"
+                  aria-selected="false"
+                  aria-disabled={unavailable}
+                  disabled={unavailable}
+                  onClick={() => {
+                    if (!onSelect(individual.id)) {
+                      setSelectionError(copy.failureMessage);
+                    }
+                  }}
+                  style={{
+                    display: "block",
+                    width: "100%",
+                    padding: "8px 10px",
+                    border: "none",
+                    borderBottom: "1px solid #f0f0f0",
+                    background: "none",
+                    color: unavailable ? "#999" : "inherit",
+                    textAlign: "left",
+                    cursor: unavailable ? "not-allowed" : "pointer",
+                    fontSize: 13,
+                  }}
+                >
+                  <div>{individual.name || individual.id}</div>
+                  {individual.birthDate && (
+                    <div style={{ fontSize: 11, color: "#888" }}>
+                      b. {individual.birthDate}
+                    </div>
+                  )}
+                  {unavailableReason && (
+                    <div style={{ fontSize: 11 }}>
+                      {unavailableReason}
+                    </div>
+                  )}
+                </button>
+              );
+            })}
           </div>
         )}
 

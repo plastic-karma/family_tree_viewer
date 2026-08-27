@@ -7,6 +7,7 @@ import { describe, expect, it, vi } from "vitest";
 vi.mock("./components/TreeViewer", () => ({
   TreeViewer: ({
     nodes,
+    edges,
     onNodeClick,
   }: {
     nodes: Array<{
@@ -14,6 +15,7 @@ vi.mock("./components/TreeViewer", () => ({
       type?: string;
       data: { label?: unknown };
     }>;
+    edges: Array<{ id: string }>;
     onNodeClick?: (
       event: ReactMouseEvent<Element>,
       node: { id: string; type?: string }
@@ -29,6 +31,11 @@ vi.mock("./components/TreeViewer", () => ({
           {String(node.data.label ?? "")}
         </button>
       ))}
+      {edges.map((edge) => (
+        <span key={edge.id} data-testid="tree-edge">
+          {edge.id}
+        </span>
+      ))}
     </div>
   ),
 }));
@@ -38,7 +45,7 @@ import App from "./App";
 Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
 
 describe("App editing and relationship changes", () => {
-  it("updates fields and sibling relationships in the graph and export", async () => {
+  it("updates fields and family relationships in the graph and export", async () => {
     const source = `0 HEAD
 1 SOUR ExistingApp
 0 @I1@ INDI
@@ -51,6 +58,13 @@ describe("App editing and relationship changes", () => {
 1 NAME Existing /Candidate/
 1 SEX F
 1 _CUSTOM keep candidate data
+0 @I3@ INDI
+1 NAME Existing /Partner/
+1 SEX F
+1 _CUSTOM keep partner data
+0 @I4@ INDI
+1 NAME Existing /Child/
+1 _CUSTOM keep child data
 0 TRLR`;
     const container = document.createElement("div");
     document.body.appendChild(container);
@@ -183,7 +197,69 @@ describe("App editing and relationship changes", () => {
       expect(relationshipExport).toContain("1 NAME Existing /Candidate/");
       expect(relationshipExport).toContain("1 _CUSTOM keep candidate data");
       expect(relationshipExport).not.toContain("1 CHIL @I2@");
-      expect(relationshipExport?.match(/0 @I\d+@ INDI/g)).toHaveLength(2);
+      expect(relationshipExport?.match(/0 @I\d+@ INDI/g)).toHaveLength(4);
+
+      await clickButton(detailPanel, "Add spouse");
+      const spouseSearchInput = container.querySelector(
+        'input[name="spouseSearch"]'
+      );
+      const spouseDialog = container.querySelector('[role="dialog"]');
+      if (
+        !(spouseSearchInput instanceof HTMLInputElement) ||
+        !(spouseDialog instanceof HTMLElement)
+      ) {
+        throw new Error("Spouse search dialog did not render");
+      }
+      await act(async () => {
+        setInputValue(spouseSearchInput, "Existing Partner");
+      });
+      await clickButton(spouseDialog, "Existing Partner");
+      expect(detailPanel.textContent).toContain("Existing Partner");
+      expect(tree.textContent).toContain("parent:@F2@:@I3@");
+
+      await clickButton(detailPanel, "Add child");
+      const childSearchInput = container.querySelector(
+        'input[name="childSearch"]'
+      );
+      const childDialog = container.querySelector('[role="dialog"]');
+      if (
+        !(childSearchInput instanceof HTMLInputElement) ||
+        !(childDialog instanceof HTMLElement)
+      ) {
+        throw new Error("Child search dialog did not render");
+      }
+      await act(async () => {
+        setInputValue(childSearchInput, "Existing Child");
+      });
+      await clickButton(childDialog, "Existing Child");
+      expect(detailPanel.textContent).toContain("Existing Child");
+      expect(tree.textContent).toContain("child:@F2@:@I4@");
+
+      await clickButton(container, "Export GED");
+      const additionsExport = await exportedBlob?.text();
+      expect(additionsExport).toContain("1 WIFE @I3@");
+      expect(additionsExport).toContain("1 CHIL @I4@");
+      expect(additionsExport).toContain("1 _CUSTOM keep partner data");
+      expect(additionsExport).toContain("1 _CUSTOM keep child data");
+
+      await clickAriaButton(
+        detailPanel,
+        "Remove Existing Child as child"
+      );
+      await clickAriaButton(
+        detailPanel,
+        "Remove Existing Partner as spouse"
+      );
+      expect(tree.textContent).not.toContain("child:@F2@:@I4@");
+      expect(tree.textContent).not.toContain("parent:@F2@:@I3@");
+
+      await clickButton(container, "Export GED");
+      const removalsExport = await exportedBlob?.text();
+      expect(removalsExport).not.toContain("1 WIFE @I3@");
+      expect(removalsExport).not.toContain("1 CHIL @I4@");
+      expect(removalsExport).toContain("0 @I3@ INDI");
+      expect(removalsExport).toContain("0 @I4@ INDI");
+      expect(removalsExport?.match(/0 @I\d+@ INDI/g)).toHaveLength(4);
     } finally {
       await act(async () => root.unmount());
       container.remove();
@@ -220,6 +296,15 @@ async function clickButton(container: Element, label: string) {
     (candidate) => candidate.textContent === label
   );
   if (!button) throw new Error(`Could not find "${label}" button`);
+
+  await act(async () => button.click());
+}
+
+async function clickAriaButton(container: Element, label: string) {
+  const button = container.querySelector(`button[aria-label="${label}"]`);
+  if (!(button instanceof HTMLButtonElement)) {
+    throw new Error(`Could not find "${label}" button`);
+  }
 
   await act(async () => button.click());
 }

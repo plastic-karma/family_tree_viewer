@@ -4,10 +4,14 @@ import { TreeViewer } from "./components/TreeViewer";
 import { DetailPanel } from "./components/DetailPanel";
 import { SearchBox } from "./components/SearchBox";
 import {
+  addChild,
   addSibling,
+  addSpouse,
   exportGedcom,
   parseGedcom,
+  removeChild,
   removeSibling,
+  removeSpouse,
 } from "./parser/gedcom";
 import { buildFlowElements, PERSON_NODE_TYPE } from "./layout";
 import type { FlowElements } from "./layout";
@@ -58,26 +62,73 @@ function App() {
     });
   };
 
-  const handleSiblingAdd = (
-    personId: string,
-    siblingId: string
+  const applyRelationshipUpdate = (
+    updated: GedcomDocument | null
   ): boolean => {
-    if (!gedcom) return false;
-    const updated = addSibling(gedcom, personId, siblingId);
     if (!updated) return false;
-
     setGedcom(updated);
     setFlowData(buildFlowElements(updated));
     return true;
   };
 
-  const handleSiblingRemove = (personId: string, siblingId: string) => {
-    if (!gedcom) return;
-    const updated = removeSibling(gedcom, personId, siblingId);
-    if (!updated) return;
+  const handleSiblingAdd = (
+    personId: string,
+    siblingId: string
+  ): boolean =>
+    gedcom
+      ? applyRelationshipUpdate(addSibling(gedcom, personId, siblingId))
+      : false;
 
-    setGedcom(updated);
-    setFlowData(buildFlowElements(updated));
+  const handleSiblingRemove = (personId: string, siblingId: string) => {
+    if (gedcom) {
+      applyRelationshipUpdate(removeSibling(gedcom, personId, siblingId));
+    }
+  };
+
+  const handleSpouseAdd = (
+    personId: string,
+    spouseId: string,
+    familyId?: string
+  ): boolean =>
+    gedcom
+      ? applyRelationshipUpdate(
+          addSpouse(gedcom, personId, spouseId, familyId)
+        )
+      : false;
+
+  const handleSpouseRemove = (
+    personId: string,
+    spouseId: string,
+    familyId?: string
+  ) => {
+    if (gedcom) {
+      applyRelationshipUpdate(
+        removeSpouse(gedcom, personId, spouseId, familyId)
+      );
+    }
+  };
+
+  const handleChildAdd = (
+    parentId: string,
+    childId: string,
+    familyId?: string
+  ): boolean =>
+    gedcom
+      ? applyRelationshipUpdate(
+          addChild(gedcom, parentId, childId, familyId)
+        )
+      : false;
+
+  const handleChildRemove = (
+    parentId: string,
+    childId: string,
+    familyId?: string
+  ) => {
+    if (gedcom) {
+      applyRelationshipUpdate(
+        removeChild(gedcom, parentId, childId, familyId)
+      );
+    }
   };
 
   const handleExport = () => {
@@ -160,6 +211,10 @@ function App() {
           onUpdate={handleIndividualUpdate}
           onAddSibling={handleSiblingAdd}
           onRemoveSibling={handleSiblingRemove}
+          onAddSpouse={handleSpouseAdd}
+          onRemoveSpouse={handleSpouseRemove}
+          onAddChild={handleChildAdd}
+          onRemoveChild={handleChildRemove}
         />
       )}
     </>

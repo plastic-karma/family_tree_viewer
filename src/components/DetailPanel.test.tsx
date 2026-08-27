@@ -64,11 +64,15 @@ describe("DetailPanel", () => {
         onUpdate={() => undefined}
         onAddSibling={() => true}
         onRemoveSibling={() => undefined}
+        onAddSpouse={() => true}
+        onRemoveSpouse={() => undefined}
+        onAddChild={() => true}
+        onRemoveChild={() => undefined}
       />
     );
 
     expect(html).not.toContain("Unrelated One");
-    expect(html).not.toContain("Families");
+    expect(html).toContain("Add spouse");
   });
 
   it("shows marriage places and labels the close control", () => {
@@ -115,6 +119,10 @@ describe("DetailPanel", () => {
         onUpdate={() => undefined}
         onAddSibling={() => true}
         onRemoveSibling={() => undefined}
+        onAddSpouse={() => true}
+        onRemoveSpouse={() => undefined}
+        onAddChild={() => true}
+        onRemoveChild={() => undefined}
       />
     );
 
@@ -156,6 +164,10 @@ describe("DetailPanel", () => {
             }
             onAddSibling={() => true}
             onRemoveSibling={() => undefined}
+            onAddSpouse={() => true}
+            onRemoveSpouse={() => undefined}
+            onAddChild={() => true}
+            onRemoveChild={() => undefined}
           />
         );
       });
@@ -253,6 +265,10 @@ describe("DetailPanel", () => {
             onRemoveSibling={(personId, siblingId) =>
               removals.push({ personId, siblingId })
             }
+            onAddSpouse={() => true}
+            onRemoveSpouse={() => undefined}
+            onAddChild={() => true}
+            onRemoveChild={() => undefined}
           />
         );
       });
@@ -286,6 +302,170 @@ describe("DetailPanel", () => {
       container.remove();
     }
   });
+
+  it("adds and removes existing spouses and children", async () => {
+    const selected: Individual = {
+      id: "@I1@",
+      name: "Selected Parent",
+      sex: "M",
+      familyAsSpouse: ["@F1@"],
+      notes: [],
+    };
+    const spouse: Individual = {
+      id: "@I2@",
+      name: "Existing Spouse",
+      sex: "F",
+      familyAsSpouse: ["@F1@"],
+      notes: [],
+    };
+    const child: Individual = {
+      id: "@I3@",
+      name: "Existing Child",
+      sex: "U",
+      familyAsSpouse: [],
+      familyAsChild: "@F1@",
+      notes: [],
+    };
+    const spouseCandidate: Individual = {
+      id: "@I4@",
+      name: "Available Partner",
+      sex: "U",
+      familyAsSpouse: [],
+      notes: [],
+    };
+    const childCandidate: Individual = {
+      id: "@I5@",
+      name: "Available Child",
+      sex: "U",
+      familyAsSpouse: [],
+      notes: [],
+    };
+    const data: GedcomData = {
+      individuals: new Map([
+        [selected.id, selected],
+        [spouse.id, spouse],
+        [child.id, child],
+        [spouseCandidate.id, spouseCandidate],
+        [childCandidate.id, childCandidate],
+      ]),
+      families: new Map([
+        [
+          "@F1@",
+          {
+            id: "@F1@",
+            husbandId: selected.id,
+            wifeId: spouse.id,
+            childrenIds: [child.id],
+          },
+        ],
+      ]),
+    };
+    const spouseAdditions: Array<{
+      personId: string;
+      spouseId: string;
+      familyId?: string;
+    }> = [];
+    const spouseRemovals: Array<{
+      personId: string;
+      spouseId: string;
+      familyId?: string;
+    }> = [];
+    const childAdditions: Array<{
+      parentId: string;
+      childId: string;
+      familyId?: string;
+    }> = [];
+    const childRemovals: Array<{
+      parentId: string;
+      childId: string;
+      familyId?: string;
+    }> = [];
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+
+    try {
+      await act(async () => {
+        root.render(
+          <DetailPanel
+            individual={selected}
+            gedcom={data}
+            onClose={() => undefined}
+            onNavigate={() => undefined}
+            onUpdate={() => undefined}
+            onAddSibling={() => true}
+            onRemoveSibling={() => undefined}
+            onAddSpouse={(personId, spouseId, familyId) => {
+              spouseAdditions.push({ personId, spouseId, familyId });
+              return true;
+            }}
+            onRemoveSpouse={(personId, spouseId, familyId) =>
+              spouseRemovals.push({ personId, spouseId, familyId })
+            }
+            onAddChild={(parentId, childId, familyId) => {
+              childAdditions.push({ parentId, childId, familyId });
+              return true;
+            }}
+            onRemoveChild={(parentId, childId, familyId) =>
+              childRemovals.push({ parentId, childId, familyId })
+            }
+          />
+        );
+      });
+
+      await clickButton(container, "Add spouse");
+      const spouseDialog = container.querySelector('[role="dialog"]');
+      const spouseInput = container.querySelector(
+        'input[name="spouseSearch"]'
+      );
+      if (
+        !(spouseDialog instanceof HTMLElement) ||
+        !(spouseInput instanceof HTMLInputElement)
+      ) {
+        throw new Error("Spouse search dialog did not render");
+      }
+      await act(async () => setInputValue(spouseInput, "Available Partner"));
+      await clickButton(spouseDialog, "Available Partner");
+
+      await clickButton(container, "Add child");
+      const childDialog = container.querySelector('[role="dialog"]');
+      const childInput = container.querySelector('input[name="childSearch"]');
+      if (
+        !(childDialog instanceof HTMLElement) ||
+        !(childInput instanceof HTMLInputElement)
+      ) {
+        throw new Error("Child search dialog did not render");
+      }
+      await act(async () => setInputValue(childInput, "Available Child"));
+      await clickButton(childDialog, "Available Child");
+
+      await clickAriaButton(
+        container,
+        "Remove Existing Spouse as spouse"
+      );
+      await clickAriaButton(container, "Remove Existing Child as child");
+
+      expect(spouseAdditions).toEqual([
+        {
+          personId: "@I1@",
+          spouseId: "@I4@",
+          familyId: undefined,
+        },
+      ]);
+      expect(spouseRemovals).toEqual([
+        { personId: "@I1@", spouseId: "@I2@", familyId: "@F1@" },
+      ]);
+      expect(childAdditions).toEqual([
+        { parentId: "@I1@", childId: "@I5@", familyId: "@F1@" },
+      ]);
+      expect(childRemovals).toEqual([
+        { parentId: "@I1@", childId: "@I3@", familyId: "@F1@" },
+      ]);
+    } finally {
+      await act(async () => root.unmount());
+      container.remove();
+    }
+  });
 });
 
 function setInputValue(input: HTMLInputElement, value: string) {
@@ -304,6 +484,15 @@ async function clickButton(container: HTMLElement, label: string) {
     (candidate) => candidate.textContent === label
   );
   if (!button) throw new Error(`Could not find "${label}" button`);
+
+  await act(async () => button.click());
+}
+
+async function clickAriaButton(container: HTMLElement, label: string) {
+  const button = container.querySelector(`button[aria-label="${label}"]`);
+  if (!(button instanceof HTMLButtonElement)) {
+    throw new Error(`Could not find "${label}" button`);
+  }
 
   await act(async () => button.click());
 }
