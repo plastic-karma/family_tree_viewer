@@ -25,16 +25,26 @@ export function PersonNode({ data }: NodeProps<PersonNodeType>) {
   const borderColor =
     data.sex === "M" ? "#4a90d9" : data.sex === "F" ? "#d94a8a" : "#888";
 
-  const dates = [data.birthDate, data.deathDate].filter(Boolean).join(" – ");
+  const dates = [
+    data.birthDate && `b. ${data.birthDate}`,
+    data.deathDate && `d. ${data.deathDate}`,
+  ]
+    .filter(Boolean)
+    .join(" · ");
 
   return (
     <div
       style={{
+        width: 160,
+        minHeight: 80,
+        boxSizing: "border-box",
+        display: "flex",
+        flexDirection: "column",
+        justifyContent: "center",
         padding: "8px 12px",
         borderRadius: 6,
         border: `2px solid ${borderColor}`,
         background: "#fff",
-        minWidth: 140,
         textAlign: "center",
         fontSize: 12,
       }}

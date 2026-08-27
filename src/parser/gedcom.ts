@@ -1,5 +1,9 @@
 import type { Individual, Family, GedcomData } from "./types";
 
+const GEDCOM_LINE_RE =
+  /^(\d+)\s+(?:(@[^@\s]+@)\s+)?([A-Za-z0-9_]+)(?:\s(.*))?$/;
+const XREF_VALUE_RE = /^@[^@\s]+@$/;
+
 /**
  * Parse a GEDCOM file string into structured data.
  *
@@ -15,59 +19,57 @@ import type { Individual, Family, GedcomData } from "./types";
 export function parseGedcom(text: string): GedcomData {
   const individuals = new Map<string, Individual>();
   const families = new Map<string, Family>();
-
-  // Notes are stored separately during parsing, then resolved at the end.
-  // This is necessary because NOTE definitions (0 @N1@ NOTE) can appear
-  // after the individuals that reference them (1 NOTE @N1@).
   const noteDefinitions = new Map<string, string>();
-  // Track which individuals reference which notes (by note ID)
-  const noteRefs = new Map<string, string[]>(); // individual ID → note IDs
+  const noteRefs = new Map<string, string[]>();
 
-  const lines = text.split(/\r?\n/);
-
-  // State: what record are we currently building?
   let currentIndi: Individual | null = null;
   let currentFam: Family | null = null;
   let currentNoteId: string | null = null;
-  let currentNoteText: string = "";
-
-  // Sub-context: when we're inside a BIRT/DEAT/MARR block,
-  // we need to know where to attach DATE/PLAC values
+  let currentNoteText = "";
+  let inlineNoteIndex: number | null = null;
   let level1Tag: string | null = null;
 
-  for (const line of lines) {
+  const finishInlineNote = () => {
+    if (
+      currentIndi &&
+      inlineNoteIndex !== null &&
+      currentIndi.notes[inlineNoteIndex] === ""
+    ) {
+      currentIndi.notes.splice(inlineNoteIndex, 1);
+    }
+    inlineNoteIndex = null;
+  };
+
+  const finishCurrentRecord = () => {
+    finishInlineNote();
+    if (currentIndi) individuals.set(currentIndi.id, currentIndi);
+    if (currentFam) families.set(currentFam.id, currentFam);
+    if (currentNoteId) noteDefinitions.set(currentNoteId, currentNoteText);
+
+    currentIndi = null;
+    currentFam = null;
+    currentNoteId = null;
+    currentNoteText = "";
+    level1Tag = null;
+  };
+
+  for (const line of text.split(/\r\n|\n|\r/)) {
     const trimmed = line.trim();
     if (!trimmed) continue;
 
-    // Parse the line into its components.
-    // Level 0 with xref: "0 @I3@ INDI"
-    // Other levels:      "1 NAME John /Doe/"
-    //                    "2 DATE 02 OCT 1957"
-    // The regex uses a single space delimiter before the value capture group
-    // so that leading whitespace in the value is preserved. This matters for
-    // CONC tags where "1 CONC  of Massachusetts" needs the leading space to
-    // reconstruct "founder of Massachusetts" correctly.
-    const match = trimmed.match(/^(\d+)\s+(@\w+@)?\s*(\w+)(?:\s(.*))?$/);
+    // Consume one separator before the value so CONC can retain an
+    // additional leading space used to join words across physical lines.
+    const match = GEDCOM_LINE_RE.exec(trimmed);
     if (!match) continue;
 
-    const level = parseInt(match[1], 10);
-    const xref = match[2] || null; // e.g. "@I3@"
+    const level = Number(match[1]);
+    const xref = match[2] ?? null;
     const tag = match[3];
     const rawValue = match[4] ?? "";
     const value = tag === "CONC" ? rawValue : rawValue.trim();
 
-    // Level 0: start of a new record — save the previous one first
     if (level === 0) {
-      if (currentIndi) individuals.set(currentIndi.id, currentIndi);
-      if (currentFam) families.set(currentFam.id, currentFam);
-      if (currentNoteId) {
-        noteDefinitions.set(currentNoteId, currentNoteText);
-      }
-      currentIndi = null;
-      currentFam = null;
-      currentNoteId = null;
-      currentNoteText = "";
-      level1Tag = null;
+      finishCurrentRecord();
 
       if (tag === "INDI" && xref) {
         currentIndi = {
@@ -84,77 +86,82 @@ export function parseGedcom(text: string): GedcomData {
         };
       } else if (tag === "NOTE" && xref) {
         currentNoteId = xref;
-        // Some NOTE records have text on the same line as the tag
-        if (value) currentNoteText = value;
+        currentNoteText = value;
       }
       continue;
     }
 
-    // Level 1: direct properties of the current record
     if (level === 1) {
+      finishInlineNote();
       level1Tag = tag;
 
       if (currentIndi) {
         switch (tag) {
           case "NAME":
-            // GEDCOM names use slashes around the surname: "John /Doe/"
             currentIndi.name = value.replace(/\//g, "").trim();
             break;
           case "SEX":
             currentIndi.sex = value === "M" ? "M" : value === "F" ? "F" : "U";
             break;
           case "FAMS":
-            currentIndi.familyAsSpouse.push(value);
-            break;
-          case "FAMC":
-            currentIndi.familyAsChild = value;
-            break;
-          case "NOTE":
-            // NOTE references look like "@N40@" — store for resolution later.
-            // We defer resolution because note definitions may appear after
-            // the individuals that reference them.
-            if (value.startsWith("@")) {
-              if (!noteRefs.has(currentIndi.id)) {
-                noteRefs.set(currentIndi.id, []);
-              }
-              noteRefs.get(currentIndi.id)!.push(value);
+            if (value && !currentIndi.familyAsSpouse.includes(value)) {
+              currentIndi.familyAsSpouse.push(value);
             }
             break;
-          // BIRT, DEAT are handled as context for level-2 parsing
+          case "FAMC":
+            if (value) currentIndi.familyAsChild = value;
+            break;
+          case "NOTE":
+            if (XREF_VALUE_RE.test(value)) {
+              const refs = noteRefs.get(currentIndi.id);
+              if (refs) {
+                if (!refs.includes(value)) refs.push(value);
+              } else {
+                noteRefs.set(currentIndi.id, [value]);
+              }
+            } else {
+              currentIndi.notes.push(value);
+              inlineNoteIndex = currentIndi.notes.length - 1;
+            }
+            break;
         }
       }
 
-      // CONC/CONT lines build up note definition text.
-      // CONC = concatenate (no linebreak), CONT = continue (new line)
       if (currentNoteId) {
         if (tag === "CONC") {
           currentNoteText += value;
         } else if (tag === "CONT") {
-          currentNoteText += "\n" + value;
+          currentNoteText += `\n${value}`;
         }
       }
 
       if (currentFam) {
         switch (tag) {
           case "HUSB":
-            currentFam.husbandId = value;
+            if (value) currentFam.husbandId = value;
             break;
           case "WIFE":
-            currentFam.wifeId = value;
+            if (value) currentFam.wifeId = value;
             break;
           case "CHIL":
-            currentFam.childrenIds.push(value);
+            if (value && !currentFam.childrenIds.includes(value)) {
+              currentFam.childrenIds.push(value);
+            }
             break;
-          // MARR is handled as context for level-2 parsing
         }
       }
       continue;
     }
 
-    // Level 2: sub-properties (DATE, PLAC) — meaning depends on level1Tag context
     if (level === 2) {
       if (currentIndi) {
-        if (level1Tag === "BIRT") {
+        if (inlineNoteIndex !== null) {
+          if (tag === "CONC") {
+            currentIndi.notes[inlineNoteIndex] += value;
+          } else if (tag === "CONT") {
+            currentIndi.notes[inlineNoteIndex] += `\n${value}`;
+          }
+        } else if (level1Tag === "BIRT") {
           if (tag === "DATE") currentIndi.birthDate = value;
           if (tag === "PLAC") currentIndi.birthPlace = value;
         } else if (level1Tag === "DEAT") {
@@ -170,22 +177,38 @@ export function parseGedcom(text: string): GedcomData {
     }
   }
 
-  // Don't forget the last record in the file
-  if (currentIndi) individuals.set(currentIndi.id, currentIndi);
-  if (currentFam) families.set(currentFam.id, currentFam);
-  if (currentNoteId) noteDefinitions.set(currentNoteId, currentNoteText);
+  finishCurrentRecord();
 
-  // Resolve note references: replace note IDs with actual note text.
-  // We do this as a second pass because notes are defined at the bottom
-  // of GEDCOM files, after the individuals that reference them.
-  for (const [indiId, refs] of noteRefs) {
-    const indi = individuals.get(indiId);
-    if (!indi) continue;
+  for (const [individualId, refs] of noteRefs) {
+    const individual = individuals.get(individualId);
+    if (!individual) continue;
+
     for (const noteId of refs) {
-      const text = noteDefinitions.get(noteId);
-      if (text) {
-        indi.notes.push(text);
+      const note = noteDefinitions.get(noteId);
+      if (note) individual.notes.push(note);
+    }
+  }
+
+  // Family records are authoritative relationship links. Backfill omitted
+  // reciprocal FAMS/FAMC tags so layout and detail navigation remain complete.
+  for (const [familyId, family] of families) {
+    if (family.husbandId) {
+      const husband = individuals.get(family.husbandId);
+      if (husband && !husband.familyAsSpouse.includes(familyId)) {
+        husband.familyAsSpouse.push(familyId);
       }
+    }
+
+    if (family.wifeId) {
+      const wife = individuals.get(family.wifeId);
+      if (wife && !wife.familyAsSpouse.includes(familyId)) {
+        wife.familyAsSpouse.push(familyId);
+      }
+    }
+
+    for (const childId of family.childrenIds) {
+      const child = individuals.get(childId);
+      if (child && !child.familyAsChild) child.familyAsChild = familyId;
     }
   }
 

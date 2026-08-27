@@ -14,6 +14,8 @@ Upload a `.ged` file and explore your family tree interactively — no backend r
 
 ## Getting Started
 
+Requires Node.js 20.19 or newer.
+
 ```bash
 npm install
 npm run dev

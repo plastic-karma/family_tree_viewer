@@ -40,13 +40,14 @@ export function SearchBox({ gedcom, onSelect }: SearchBoxProps) {
   }, []);
 
   const results = useMemo(() => {
-    if (query.length < 2) return [];
-    const lowerQuery = query.toLowerCase();
+    const normalizedQuery = query.trim().toLowerCase();
+    if (normalizedQuery.length < 2) return [];
+
     const matches: Individual[] = [];
-    for (const indi of gedcom.individuals.values()) {
-      if (indi.name.toLowerCase().includes(lowerQuery)) {
-        matches.push(indi);
-        if (matches.length >= 10) break;
+    for (const individual of gedcom.individuals.values()) {
+      if (individual.name.toLowerCase().includes(normalizedQuery)) {
+        matches.push(individual);
+        if (matches.length === 10) break;
       }
     }
     return matches;
@@ -64,15 +65,19 @@ export function SearchBox({ gedcom, onSelect }: SearchBoxProps) {
       }}
     >
       <input
-        type="text"
+        type="search"
+        aria-label="Search people by name"
+        autoComplete="off"
+        spellCheck={false}
         placeholder="Search by name..."
         value={query}
-        onChange={(e) => {
-          setQuery(e.target.value);
-          setIsOpen(true);
+        onChange={(event) => {
+          const nextQuery = event.target.value;
+          setQuery(nextQuery);
+          setIsOpen(nextQuery.trim().length >= 2);
         }}
         onFocus={() => {
-          if (query.length >= 2) setIsOpen(true);
+          if (query.trim().length >= 2) setIsOpen(true);
         }}
         style={{
           width: "100%",
@@ -97,6 +102,7 @@ export function SearchBox({ gedcom, onSelect }: SearchBoxProps) {
         >
           {results.map((indi) => (
             <button
+              type="button"
               key={indi.id}
               onClick={() => {
                 onSelect(indi.id);

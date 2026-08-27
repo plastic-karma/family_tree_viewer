@@ -328,4 +328,49 @@ ${input}`;
     const person = parseGedcom(input).individuals.get("@I1@");
     expect(person!.notes).toEqual(["A historical note"]);
   });
+
+  it("parses inline notes and their continuations", () => {
+    const input = `0 @I1@ INDI
+1 NAME Inline /Note/
+1 NOTE @home with family
+2 CONT second
+2 CONC  half`;
+
+    const person = parseGedcom(input).individuals.get("@I1@");
+    expect(person!.notes).toEqual(["@home with family\nsecond half"]);
+  });
+
+  it("accepts punctuation in cross-reference identifiers", () => {
+    const input = `0 @I-1.2@ INDI
+1 NAME Punctuated /Identifier/`;
+
+    const person = parseGedcom(input).individuals.get("@I-1.2@");
+    expect(person?.name).toBe("Punctuated Identifier");
+  });
+
+  it("handles classic Mac carriage-return line endings", () => {
+    const input = "0 @I1@ INDI\r1 NAME Classic /Mac/\r1 SEX F\r";
+
+    const person = parseGedcom(input).individuals.get("@I1@");
+    expect(person?.name).toBe("Classic Mac");
+    expect(person?.sex).toBe("F");
+  });
+
+  it("infers missing individual family links from family records", () => {
+    const input = `0 @I1@ INDI
+1 NAME First /Parent/
+0 @I2@ INDI
+1 NAME Second /Parent/
+0 @I3@ INDI
+1 NAME Their /Child/
+0 @F1@ FAM
+1 HUSB @I1@
+1 WIFE @I2@
+1 CHIL @I3@`;
+
+    const result = parseGedcom(input);
+    expect(result.individuals.get("@I1@")?.familyAsSpouse).toEqual(["@F1@"]);
+    expect(result.individuals.get("@I2@")?.familyAsSpouse).toEqual(["@F1@"]);
+    expect(result.individuals.get("@I3@")?.familyAsChild).toBe("@F1@");
+  });
 });

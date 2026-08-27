@@ -10,127 +10,199 @@ const H_GAP = 40; // horizontal gap between nodes
 const V_GAP = 120; // vertical gap between generations
 const FAMILY_NODE_SIZE = 8; // small junction dot
 
+function assignGenerations(data: GedcomData): Map<string, number> {
+  // Spouses belong to the same generation. Collapse them into groups before
+  // applying parent-to-child generation constraints.
+  const groupParent = new Map<string, string>();
+  for (const id of data.individuals.keys()) groupParent.set(id, id);
+
+  const findGroup = (id: string): string => {
+    let root = id;
+    while (groupParent.get(root) !== root) {
+      root = groupParent.get(root)!;
+    }
+
+    let current = id;
+    while (current !== root) {
+      const parent = groupParent.get(current)!;
+      groupParent.set(current, root);
+      current = parent;
+    }
+    return root;
+  };
+
+  for (const family of data.families.values()) {
+    if (
+      family.husbandId &&
+      family.wifeId &&
+      data.individuals.has(family.husbandId) &&
+      data.individuals.has(family.wifeId)
+    ) {
+      const husbandGroup = findGroup(family.husbandId);
+      const wifeGroup = findGroup(family.wifeId);
+      if (husbandGroup !== wifeGroup) {
+        groupParent.set(wifeGroup, husbandGroup);
+      }
+    }
+  }
+
+  const groupByPerson = new Map<string, string>();
+  const childrenByGroup = new Map<string, Set<string>>();
+  const indegreeByGroup = new Map<string, number>();
+  for (const id of data.individuals.keys()) {
+    const group = findGroup(id);
+    groupByPerson.set(id, group);
+    if (!childrenByGroup.has(group)) {
+      childrenByGroup.set(group, new Set());
+      indegreeByGroup.set(group, 0);
+    }
+  }
+
+  for (const family of data.families.values()) {
+    const parentGroup =
+      (family.husbandId && groupByPerson.get(family.husbandId)) ||
+      (family.wifeId && groupByPerson.get(family.wifeId));
+    if (!parentGroup) continue;
+
+    const childGroups = childrenByGroup.get(parentGroup)!;
+    for (const childId of family.childrenIds) {
+      const childGroup = groupByPerson.get(childId);
+      if (
+        !childGroup ||
+        childGroup === parentGroup ||
+        childGroups.has(childGroup)
+      ) {
+        continue;
+      }
+
+      childGroups.add(childGroup);
+      indegreeByGroup.set(
+        childGroup,
+        (indegreeByGroup.get(childGroup) ?? 0) + 1
+      );
+    }
+  }
+
+  const generationByGroup = new Map<string, number>();
+  const pendingGroups = new Set<string>();
+  const queue: string[] = [];
+  for (const [group, indegree] of indegreeByGroup) {
+    generationByGroup.set(group, 0);
+    pendingGroups.add(group);
+    if (indegree === 0) queue.push(group);
+  }
+
+  let head = 0;
+  while (pendingGroups.size > 0) {
+    if (head === queue.length) {
+      // Corrupt GEDCOM files can contain ancestry cycles. Break each cycle at
+      // a deterministic insertion-order node rather than looping forever.
+      const cycleRoot = pendingGroups.values().next().value;
+      if (cycleRoot === undefined) break;
+      queue.push(cycleRoot);
+    }
+
+    const group = queue[head++];
+    if (!pendingGroups.delete(group)) continue;
+
+    const childGeneration = (generationByGroup.get(group) ?? 0) + 1;
+    for (const childGroup of childrenByGroup.get(group) ?? []) {
+      if (!pendingGroups.has(childGroup)) continue;
+
+      if (childGeneration > (generationByGroup.get(childGroup) ?? 0)) {
+        generationByGroup.set(childGroup, childGeneration);
+      }
+
+      const remainingIndegree = (indegreeByGroup.get(childGroup) ?? 0) - 1;
+      indegreeByGroup.set(childGroup, remainingIndegree);
+      if (remainingIndegree === 0) queue.push(childGroup);
+    }
+  }
+
+  const generationByPerson = new Map<string, number>();
+  for (const [id, group] of groupByPerson) {
+    generationByPerson.set(id, generationByGroup.get(group) ?? 0);
+  }
+  return generationByPerson;
+}
+
 export function buildFlowElements(data: GedcomData): {
   nodes: Node[];
   edges: Edge[];
 } {
   const nodes: Node[] = [];
   const edges: Edge[] = [];
+  const generationMap = assignGenerations(data);
 
-  // Step 1: Assign generations via BFS.
-  const generationMap = new Map<string, number>();
-
-  const roots: string[] = [];
-  for (const [id, indi] of data.individuals) {
-    if (!indi.familyAsChild) {
-      roots.push(id);
-    }
-  }
-
-  // BFS using an index pointer instead of Array.shift().
-  // shift() is O(n) because it re-indexes every element; an index pointer is O(1).
-  const queue: { id: string; gen: number }[] = roots.map((id) => ({
-    id,
-    gen: 0,
-  }));
-  let head = 0;
-  while (head < queue.length) {
-    const { id, gen } = queue[head++];
-
-    if (generationMap.has(id) && generationMap.get(id)! >= gen) continue;
-    generationMap.set(id, gen);
-
-    const indi = data.individuals.get(id);
-    if (!indi) continue;
-
-    for (const famId of indi.familyAsSpouse) {
-      const fam = data.families.get(famId);
-      if (!fam) continue;
-
-      const spouseId =
-        fam.husbandId === id ? fam.wifeId : fam.husbandId;
-      if (spouseId) {
-        queue.push({ id: spouseId, gen });
-      }
-
-      for (const childId of fam.childrenIds) {
-        queue.push({ id: childId, gen: gen + 1 });
-      }
-    }
-  }
-
-  // Handle anyone not reached by BFS (disconnected tree fragments)
-  for (const [id] of data.individuals) {
-    if (!generationMap.has(id)) {
-      generationMap.set(id, 0);
-    }
-  }
-
-  // Step 2: Group individuals by generation for horizontal positioning
   const generations = new Map<number, string[]>();
-  for (const [id, gen] of generationMap) {
-    if (!generations.has(gen)) generations.set(gen, []);
-    generations.get(gen)!.push(id);
+  let maxGeneration = 0;
+  for (const [id, generation] of generationMap) {
+    const ids = generations.get(generation);
+    if (ids) {
+      ids.push(id);
+    } else {
+      generations.set(generation, [id]);
+    }
+    if (generation > maxGeneration) maxGeneration = generation;
   }
 
-  // Flip the Y axis: latest generation at the top, oldest at the bottom.
-  const maxGen = Math.max(...generationMap.values(), 0);
-  const genToY = (gen: number) => (maxGen - gen) * (NODE_HEIGHT + V_GAP);
+  const generationToY = (generation: number) =>
+    (maxGeneration - generation) * (NODE_HEIGHT + V_GAP);
 
-  // Step 3: Create person nodes with positions
-  for (const [gen, ids] of generations) {
+  for (const [generation, ids] of generations) {
     const totalWidth = ids.length * (NODE_WIDTH + H_GAP) - H_GAP;
     const startX = -totalWidth / 2;
 
-    ids.forEach((id, i) => {
-      const indi = data.individuals.get(id)!;
+    for (let index = 0; index < ids.length; index += 1) {
+      const id = ids[index];
+      const individual = data.individuals.get(id)!;
       const node: Node<PersonNodeData> = {
         id,
         type: PERSON_NODE_TYPE,
         position: {
-          x: startX + i * (NODE_WIDTH + H_GAP),
-          y: genToY(gen),
+          x: startX + index * (NODE_WIDTH + H_GAP),
+          y: generationToY(generation),
         },
         data: {
-          label: indi.name || "Unknown",
-          sex: indi.sex,
-          birthDate: indi.birthDate,
-          deathDate: indi.deathDate,
+          label: individual.name || "Unknown",
+          sex: individual.sex,
+          birthDate: individual.birthDate,
+          deathDate: individual.deathDate,
         },
       };
       nodes.push(node);
-    });
+    }
   }
 
-  // Build a lookup map for O(1) node access by ID.
-  // Without this, finding parent nodes for junction positioning would be
-  // O(nodes * families) — a linear scan per parent per family.
-  const nodeById = new Map<string, Node>(nodes.map((n) => [n.id, n]));
+  const nodeById = new Map<string, Node>(nodes.map((node) => [node.id, node]));
 
-  // Step 4: Create family junction nodes and edges
-  for (const [famId, fam] of data.families) {
-    const parentIds = [fam.husbandId, fam.wifeId].filter(Boolean) as string[];
+  for (const [familyId, family] of data.families) {
+    const parentIds: string[] = [];
+    if (family.husbandId && nodeById.has(family.husbandId)) {
+      parentIds.push(family.husbandId);
+    }
+    if (
+      family.wifeId &&
+      family.wifeId !== family.husbandId &&
+      nodeById.has(family.wifeId)
+    ) {
+      parentIds.push(family.wifeId);
+    }
     if (parentIds.length === 0) continue;
 
-    const parentGen = Math.max(
-      ...parentIds.map((id) => generationMap.get(id) ?? 0)
-    );
+    let parentX = 0;
+    for (const parentId of parentIds) {
+      parentX += nodeById.get(parentId)!.position.x;
+    }
 
-    const parentNodes = parentIds
-      .map((id) => nodeById.get(id))
-      .filter(Boolean);
-    const avgX =
-      parentNodes.length > 0
-        ? parentNodes.reduce((sum, n) => sum + n!.position.x, 0) /
-          parentNodes.length
-        : 0;
-
+    const junctionId = `family:${familyId}`;
+    const parentGeneration = generationMap.get(parentIds[0]) ?? 0;
     const junctionNode: Node = {
-      id: famId,
+      id: junctionId,
       type: "default",
       position: {
-        x: avgX + NODE_WIDTH / 2 - FAMILY_NODE_SIZE / 2,
-        y: genToY(parentGen) + NODE_HEIGHT + 20,
+        x: parentX / parentIds.length + NODE_WIDTH / 2 - FAMILY_NODE_SIZE / 2,
+        y: generationToY(parentGeneration) + NODE_HEIGHT + 20,
       },
       data: { label: "" },
       style: {
@@ -146,20 +218,22 @@ export function buildFlowElements(data: GedcomData): {
     };
     nodes.push(junctionNode);
 
-    // Edges flow top→bottom visually (youngest→oldest).
-    for (const childId of fam.childrenIds) {
+    const linkedChildren = new Set<string>();
+    for (const childId of family.childrenIds) {
+      if (!nodeById.has(childId) || linkedChildren.has(childId)) continue;
+      linkedChildren.add(childId);
       edges.push({
-        id: `${childId}-${famId}`,
+        id: `child:${familyId}:${childId}`,
         source: childId,
-        target: famId,
+        target: junctionId,
         type: "smoothstep",
       });
     }
 
     for (const parentId of parentIds) {
       edges.push({
-        id: `${famId}-${parentId}`,
-        source: famId,
+        id: `parent:${familyId}:${parentId}`,
+        source: junctionId,
         target: parentId,
         type: "smoothstep",
       });

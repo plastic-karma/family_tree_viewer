@@ -1,4 +1,4 @@
-import type { Individual, GedcomData } from "../parser/types";
+import type { Family, GedcomData, Individual } from "../parser/types";
 
 interface DetailPanelProps {
   individual: Individual;
@@ -14,17 +14,26 @@ export function DetailPanel({
   onNavigate,
 }: DetailPanelProps) {
   const spouseFamilies = individual.familyAsSpouse
-    .map((famId) => gedcom.families.get(famId))
-    .filter(Boolean);
+    .map((familyId) => gedcom.families.get(familyId))
+    .filter(
+      (family): family is Family =>
+        family !== undefined &&
+        (family.husbandId === individual.id ||
+          family.wifeId === individual.id)
+    );
 
   return (
     <div
+      role="complementary"
+      aria-label={`${individual.name || "Person"} details`}
       style={{
         position: "fixed",
         top: 0,
         right: 0,
-        width: 320,
+        width: 360,
+        maxWidth: "100vw",
         height: "100vh",
+        boxSizing: "border-box",
         background: "#fff",
         borderLeft: "1px solid #ddd",
         padding: 20,
@@ -34,6 +43,8 @@ export function DetailPanel({
       }}
     >
       <button
+        type="button"
+        aria-label="Close details"
         onClick={onClose}
         style={{
           position: "absolute",
@@ -46,7 +57,7 @@ export function DetailPanel({
           color: "#666",
         }}
       >
-        x
+        ×
       </button>
 
       <h2 style={{ margin: "0 0 4px", fontSize: 18 }}>{individual.name}</h2>
@@ -91,42 +102,52 @@ export function DetailPanel({
 
       {spouseFamilies.length > 0 && (
         <Section title="Families">
-          {spouseFamilies.map((fam) => {
-            if (!fam) return null;
+          {spouseFamilies.map((family) => {
             const spouseId =
-              fam.husbandId === individual.id ? fam.wifeId : fam.husbandId;
-            const spouse = spouseId
-              ? gedcom.individuals.get(spouseId)
-              : undefined;
+              family.husbandId === individual.id
+                ? family.wifeId
+                : family.husbandId;
+            const spouse =
+              spouseId && spouseId !== individual.id
+                ? gedcom.individuals.get(spouseId)
+                : undefined;
+
             return (
-              <div key={fam.id} style={{ marginBottom: 12 }}>
+              <div key={family.id} style={{ marginBottom: 12 }}>
                 {spouse && (
                   <div>
                     Spouse:{" "}
                     <PersonLink
                       id={spouse.id}
-                      name={spouse.name}
+                      name={spouse.name || spouse.id}
                       onNavigate={onNavigate}
                     />
                   </div>
                 )}
-                {fam.marriageDate && (
+                {(family.marriageDate || family.marriagePlace) && (
                   <div style={{ color: "#666", fontSize: 12 }}>
-                    Married {fam.marriageDate}
+                    {family.marriageDate && (
+                      <div>Married {family.marriageDate}</div>
+                    )}
+                    {family.marriagePlace && <div>{family.marriagePlace}</div>}
                   </div>
                 )}
-                {fam.childrenIds.length > 0 && (
+                {family.childrenIds.length > 0 && (
                   <div style={{ marginTop: 4 }}>
                     <div style={{ fontSize: 12, color: "#888" }}>Children:</div>
-                    {fam.childrenIds.map((childId) => {
+                    {family.childrenIds.map((childId) => {
                       const child = gedcom.individuals.get(childId);
                       return (
                         <div key={childId} style={{ marginLeft: 8 }}>
-                          <PersonLink
-                            id={childId}
-                            name={child?.name || childId}
-                            onNavigate={onNavigate}
-                          />
+                          {child ? (
+                            <PersonLink
+                              id={child.id}
+                              name={child.name || child.id}
+                              onNavigate={onNavigate}
+                            />
+                          ) : (
+                            <span>{childId}</span>
+                          )}
                         </div>
                       );
                     })}
@@ -170,6 +191,7 @@ function PersonLink({
 }) {
   return (
     <button
+      type="button"
       onClick={() => onNavigate(id)}
       style={{
         background: "none",
@@ -194,20 +216,21 @@ function Section({
   children: React.ReactNode;
 }) {
   return (
-    <div style={{ marginBottom: 16 }}>
-      <div
+    <section style={{ marginBottom: 16 }}>
+      <h3
         style={{
+          margin: "0 0 4px",
           fontSize: 11,
+          fontWeight: 400,
           textTransform: "uppercase",
           color: "#999",
           letterSpacing: 0.5,
-          marginBottom: 4,
         }}
       >
         {title}
-      </div>
+      </h3>
       {children}
-    </div>
+    </section>
   );
 }
 

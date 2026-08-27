@@ -1,4 +1,4 @@
-import type { DragEvent } from "react";
+import { useRef, type ChangeEvent, type DragEvent } from "react";
 
 /**
  * A drag-and-drop file upload component.
@@ -10,81 +10,119 @@ import type { DragEvent } from "react";
 
 interface FileUploadProps {
   onFileLoaded: (content: string) => void;
+  onFileError: (message: string) => void;
+  error?: string | null;
 }
 
-export function FileUpload({ onFileLoaded }: FileUploadProps) {
-  const handleDrop = (e: DragEvent<HTMLDivElement>) => {
-    e.preventDefault();
-    const file = e.dataTransfer.files[0];
-    if (file) {
-      readFile(file, onFileLoaded);
-    }
+export function FileUpload({
+  onFileLoaded,
+  onFileError,
+  error,
+}: FileUploadProps) {
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const handleDrop = (event: DragEvent<HTMLElement>) => {
+    event.preventDefault();
+    const file = event.dataTransfer.files[0];
+    if (file) readFile(file, onFileLoaded, onFileError);
   };
 
-  const handleFileInput = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (file) {
-      readFile(file, onFileLoaded);
-    }
+  const handleFileInput = (event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.currentTarget.files?.[0];
+    if (file) readFile(file, onFileLoaded, onFileError);
+
+    // Permit choosing the same file again after correcting an external read
+    // problem or retrying an invalid document.
+    event.currentTarget.value = "";
   };
 
   return (
-    <div
+    <main
       onDrop={handleDrop}
-      onDragOver={(e) => e.preventDefault()}
+      onDragOver={(event) => event.preventDefault()}
       style={{
         display: "flex",
-        flexDirection: "column",
         alignItems: "center",
         justifyContent: "center",
-        height: "100vh",
-        gap: 16,
+        minHeight: "100vh",
       }}
     >
-      <div
+      <section
+        aria-label="GEDCOM file upload"
         style={{
+          width: "min(480px, calc(100vw - 32px))",
+          boxSizing: "border-box",
           border: "2px dashed #aaa",
           borderRadius: 12,
-          padding: "48px 64px",
+          padding: "48px clamp(24px, 8vw, 64px)",
           textAlign: "center",
           color: "#666",
         }}
       >
-        <p style={{ fontSize: 18, margin: 0 }}>
-          Drop a .ged file here
-        </p>
-        <p style={{ margin: "12px 0 0", fontSize: 14 }}>or</p>
-        <label
+        <h1
           style={{
-            display: "inline-block",
+            margin: "0 0 8px",
+            color: "#213547",
+            fontSize: 24,
+          }}
+        >
+          Family Tree Viewer
+        </h1>
+        <p style={{ fontSize: 18, margin: 0 }}>Drop a .ged file here</p>
+        <p style={{ margin: "12px 0 0", fontSize: 14 }}>or</p>
+        <button
+          type="button"
+          aria-describedby={error ? "file-upload-error" : undefined}
+          onClick={() => fileInputRef.current?.click()}
+          style={{
             marginTop: 12,
             padding: "8px 20px",
             background: "#4a90d9",
             color: "#fff",
+            border: 0,
             borderRadius: 6,
             cursor: "pointer",
+            fontSize: 14,
           }}
         >
           Browse files
-          <input
-            type="file"
-            accept=".ged"
-            onChange={handleFileInput}
-            style={{ display: "none" }}
-          />
-        </label>
-      </div>
-    </div>
+        </button>
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept=".ged"
+          onChange={handleFileInput}
+          style={{ display: "none" }}
+        />
+        {error && (
+          <p
+            id="file-upload-error"
+            role="alert"
+            style={{ margin: "16px 0 0", color: "#b42318", fontSize: 14 }}
+          >
+            {error}
+          </p>
+        )}
+      </section>
+    </main>
   );
 }
 
-function readFile(file: File, callback: (content: string) => void) {
+function readFile(
+  file: File,
+  onFileLoaded: (content: string) => void,
+  onFileError: (message: string) => void
+) {
   const reader = new FileReader();
-  reader.onload = (e) => {
-    const text = e.target?.result;
+  reader.onload = (event) => {
+    const text = event.target?.result;
     if (typeof text === "string") {
-      callback(text);
+      onFileLoaded(text);
+    } else {
+      onFileError(`Could not decode "${file.name}".`);
     }
   };
+  reader.onerror = () => onFileError(`Could not read "${file.name}".`);
+  reader.onabort = () => onFileError(`Reading "${file.name}" was cancelled.`);
   reader.readAsText(file);
 }

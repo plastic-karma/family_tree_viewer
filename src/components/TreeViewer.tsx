@@ -51,6 +51,8 @@ export function TreeViewer({
         fitView
         minZoom={0.01}
         maxZoom={2}
+        nodesDraggable={false}
+        nodesConnectable={false}
       >
         <Background />
         <Controls />
