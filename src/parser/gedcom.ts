@@ -1,4 +1,8 @@
-import type { Individual, Family, GedcomData } from "./types";
+import type {
+  Individual,
+  Family,
+  GedcomDocument,
+} from "./types";
 
 const GEDCOM_LINE_RE =
   /^(\d+)\s+(?:(@[^@\s]+@)\s+)?([A-Za-z0-9_]+)(?:\s(.*))?$/;
@@ -16,7 +20,7 @@ const XREF_VALUE_RE = /^@[^@\s]+@$/;
  * - Track the level-1 "context" tag (e.g., BIRT vs DEAT) so we know
  *   where to attach level-2 DATE/PLAC values
  */
-export function parseGedcom(text: string): GedcomData {
+export function parseGedcom(text: string): GedcomDocument {
   const individuals = new Map<string, Individual>();
   const families = new Map<string, Family>();
   const noteDefinitions = new Map<string, string>();
@@ -212,5 +216,293 @@ export function parseGedcom(text: string): GedcomData {
     }
   }
 
-  return { individuals, families };
+  return { individuals, families, sourceText: text };
+}
+
+interface GedcomSourceLine {
+  content: string;
+  ending: string;
+}
+
+interface ParsedGedcomSourceLine {
+  level: number;
+  xref: string | null;
+  tag: string;
+  value: string;
+}
+
+interface IndividualRecord {
+  id: string;
+  start: number;
+  end: number;
+}
+
+interface SourceEdit {
+  index: number;
+  order: number;
+  deleteCount: 0 | 1;
+  contents: string[];
+}
+
+/**
+ * Export the current editable fields into the original GEDCOM document.
+ *
+ * Unknown records and tags remain byte-for-byte unchanged. Only NAME and
+ * BIRT.DATE values whose parsed values changed are rewritten.
+ */
+export function exportGedcom(document: GedcomDocument): string {
+  const lines = splitGedcomSource(document.sourceText);
+  if (lines.length === 0) return document.sourceText;
+
+  const defaultEnding =
+    lines.find((line) => line.ending !== "")?.ending ?? "\n";
+  const records = findIndividualRecords(lines);
+
+  for (let index = records.length - 1; index >= 0; index -= 1) {
+    const record = records[index];
+    const individual = document.individuals.get(record.id);
+    if (!individual) continue;
+
+    updateIndividualRecord(lines, record, individual, defaultEnding);
+  }
+
+  return lines.map((line) => line.content + line.ending).join("");
+}
+
+function splitGedcomSource(text: string): GedcomSourceLine[] {
+  const lines: GedcomSourceLine[] = [];
+  const endingPattern = /\r\n|\n|\r/g;
+  let start = 0;
+  let match: RegExpExecArray | null;
+
+  while ((match = endingPattern.exec(text)) !== null) {
+    lines.push({
+      content: text.slice(start, match.index),
+      ending: match[0],
+    });
+    start = match.index + match[0].length;
+  }
+
+  if (start < text.length) {
+    lines.push({ content: text.slice(start), ending: "" });
+  }
+
+  return lines;
+}
+
+function parseGedcomSourceLine(
+  line: GedcomSourceLine
+): ParsedGedcomSourceLine | null {
+  const match = GEDCOM_LINE_RE.exec(line.content.trim());
+  if (!match) return null;
+
+  return {
+    level: Number(match[1]),
+    xref: match[2] ?? null,
+    tag: match[3],
+    value: (match[4] ?? "").trim(),
+  };
+}
+
+function findIndividualRecords(
+  lines: GedcomSourceLine[]
+): IndividualRecord[] {
+  const records: IndividualRecord[] = [];
+
+  for (let start = 0; start < lines.length; start += 1) {
+    const line = parseGedcomSourceLine(lines[start]);
+    if (line?.level !== 0 || line.tag !== "INDI" || !line.xref) continue;
+
+    let end = start + 1;
+    while (end < lines.length) {
+      if (parseGedcomSourceLine(lines[end])?.level === 0) break;
+      end += 1;
+    }
+
+    records.push({ id: line.xref, start, end });
+    start = end - 1;
+  }
+
+  return records;
+}
+
+function updateIndividualRecord(
+  lines: GedcomSourceLine[],
+  record: IndividualRecord,
+  individual: Individual,
+  defaultEnding: string
+) {
+  const nameLines: number[] = [];
+  const birthDateLines: number[] = [];
+  let lastBirthLine: number | null = null;
+  let insideBirth = false;
+
+  for (let index = record.start + 1; index < record.end; index += 1) {
+    const line = parseGedcomSourceLine(lines[index]);
+    if (!line) continue;
+
+    if (line.level === 1) {
+      insideBirth = line.tag === "BIRT";
+      if (line.tag === "NAME") nameLines.push(index);
+      if (insideBirth) lastBirthLine = index;
+      continue;
+    }
+
+    if (line.level === 2 && insideBirth && line.tag === "DATE") {
+      birthDateLines.push(index);
+    }
+  }
+
+  const edits: SourceEdit[] = [];
+  let order = 0;
+  const desiredName = cleanGedcomValue(individual.name);
+  const lastNameLine = nameLines.at(-1);
+  const sourceName =
+    lastNameLine === undefined
+      ? ""
+      : normalizeGedcomName(
+          parseGedcomSourceLine(lines[lastNameLine])?.value ?? ""
+        );
+
+  if (sourceName !== normalizeGedcomName(desiredName)) {
+    if (desiredName && lastNameLine !== undefined) {
+      edits.push({
+        index: lastNameLine,
+        order: order++,
+        deleteCount: 1,
+        contents: [`1 NAME ${desiredName}`],
+      });
+    } else if (desiredName) {
+      edits.push({
+        index: record.start + 1,
+        order: order++,
+        deleteCount: 0,
+        contents: [`1 NAME ${desiredName}`],
+      });
+    } else {
+      for (const index of nameLines) {
+        edits.push({
+          index,
+          order: order++,
+          deleteCount: 1,
+          contents: [],
+        });
+      }
+    }
+  }
+
+  const desiredBirthDate = cleanGedcomValue(individual.birthDate ?? "");
+  const lastBirthDateLine = birthDateLines.at(-1);
+  const sourceBirthDate =
+    lastBirthDateLine === undefined
+      ? ""
+      : parseGedcomSourceLine(lines[lastBirthDateLine])?.value ?? "";
+
+  if (sourceBirthDate !== desiredBirthDate) {
+    if (desiredBirthDate && lastBirthDateLine !== undefined) {
+      edits.push({
+        index: lastBirthDateLine,
+        order: order++,
+        deleteCount: 1,
+        contents: [`2 DATE ${desiredBirthDate}`],
+      });
+    } else if (desiredBirthDate && lastBirthLine !== null) {
+      edits.push({
+        index: lastBirthLine + 1,
+        order: order++,
+        deleteCount: 0,
+        contents: [`2 DATE ${desiredBirthDate}`],
+      });
+    } else if (desiredBirthDate) {
+      edits.push({
+        index: record.end,
+        order: order++,
+        deleteCount: 0,
+        contents: ["1 BIRT", `2 DATE ${desiredBirthDate}`],
+      });
+    } else {
+      for (const index of birthDateLines) {
+        edits.push({
+          index,
+          order: order++,
+          deleteCount: 1,
+          contents: [],
+        });
+      }
+    }
+  }
+
+  edits.sort(
+    (left, right) =>
+      right.index - left.index || right.order - left.order
+  );
+
+  for (const edit of edits) {
+    if (edit.deleteCount === 1 && edit.contents.length === 1) {
+      lines[edit.index] = {
+        content: edit.contents[0],
+        ending: lines[edit.index].ending,
+      };
+    } else if (edit.deleteCount === 1) {
+      removeSourceLine(lines, edit.index);
+    } else {
+      insertSourceLines(lines, edit.index, edit.contents, defaultEnding);
+    }
+  }
+}
+
+function normalizeGedcomName(value: string): string {
+  return value.replace(/\//g, "").trim();
+}
+
+function cleanGedcomValue(value: string): string {
+  return value.replace(/\r\n|\n|\r/g, " ").trim();
+}
+
+function removeSourceLine(lines: GedcomSourceLine[], index: number) {
+  const removedFinalLine =
+    index === lines.length - 1 && lines[index].ending === "";
+  lines.splice(index, 1);
+
+  if (removedFinalLine && lines.length > 0) {
+    lines[lines.length - 1].ending = "";
+  }
+}
+
+function insertSourceLines(
+  lines: GedcomSourceLine[],
+  index: number,
+  contents: string[],
+  defaultEnding: string
+) {
+  if (contents.length === 0) return;
+
+  if (index < lines.length) {
+    const ending =
+      lines[index].ending ||
+      (index > 0 ? lines[index - 1].ending : "") ||
+      defaultEnding;
+    lines.splice(
+      index,
+      0,
+      ...contents.map((content) => ({ content, ending }))
+    );
+    return;
+  }
+
+  const preserveTrailingEnding =
+    lines.length > 0 && lines[lines.length - 1].ending !== "";
+  if (lines.length > 0 && !preserveTrailingEnding) {
+    lines[lines.length - 1].ending = defaultEnding;
+  }
+
+  lines.push(
+    ...contents.map((content, contentIndex) => ({
+      content,
+      ending:
+        preserveTrailingEnding || contentIndex < contents.length - 1
+          ? defaultEnding
+          : "",
+    }))
+  );
 }

@@ -1,3 +1,4 @@
+import { useState, type FormEvent } from "react";
 import type { Family, GedcomData, Individual } from "../parser/types";
 
 interface DetailPanelProps {
@@ -5,6 +6,10 @@ interface DetailPanelProps {
   gedcom: GedcomData;
   onClose: () => void;
   onNavigate: (personId: string) => void;
+  onUpdate: (
+    personId: string,
+    updates: Pick<Individual, "name" | "birthDate">
+  ) => void;
 }
 
 export function DetailPanel({
@@ -12,7 +17,41 @@ export function DetailPanel({
   gedcom,
   onClose,
   onNavigate,
+  onUpdate,
 }: DetailPanelProps) {
+  const [isEditing, setIsEditing] = useState(false);
+  const [draftName, setDraftName] = useState(individual.name);
+  const [draftBirthDate, setDraftBirthDate] = useState(
+    individual.birthDate ?? ""
+  );
+  const [editError, setEditError] = useState<string | null>(null);
+
+  const submitUpdate = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const name = draftName.trim();
+    const birthDate = draftBirthDate.trim();
+
+    if (!name) {
+      setEditError("Name is required.");
+      return;
+    }
+
+    onUpdate(individual.id, {
+      name,
+      birthDate: birthDate || undefined,
+    });
+    setDraftName(name);
+    setDraftBirthDate(birthDate);
+    setEditError(null);
+    setIsEditing(false);
+  };
+
+  const cancelEditing = () => {
+    setDraftName(individual.name);
+    setDraftBirthDate(individual.birthDate ?? "");
+    setEditError(null);
+    setIsEditing(false);
+  };
   const spouseFamilies = individual.familyAsSpouse
     .map((familyId) => gedcom.families.get(familyId))
     .filter(
@@ -60,20 +99,89 @@ export function DetailPanel({
         ×
       </button>
 
-      <h2 style={{ margin: "0 0 4px", fontSize: 18 }}>{individual.name}</h2>
-      <div style={{ color: "#888", fontSize: 13, marginBottom: 16 }}>
-        {individual.sex === "M"
-          ? "Male"
-          : individual.sex === "F"
-            ? "Female"
-            : "Unknown"}
-      </div>
+      {isEditing ? (
+        <form onSubmit={submitUpdate} style={{ marginBottom: 20 }}>
+          <label htmlFor="edit-person-name" style={fieldLabelStyle}>
+            Name
+          </label>
+          <input
+            id="edit-person-name"
+            name="name"
+            type="text"
+            value={draftName}
+            onChange={(event) => setDraftName(event.currentTarget.value)}
+            autoFocus
+            style={fieldInputStyle}
+          />
 
-      <EventSection
-        title="Birth"
-        date={individual.birthDate}
-        place={individual.birthPlace}
-      />
+          <label htmlFor="edit-person-birth-date" style={fieldLabelStyle}>
+            Birth date
+          </label>
+          <input
+            id="edit-person-birth-date"
+            name="birthDate"
+            type="text"
+            value={draftBirthDate}
+            onChange={(event) =>
+              setDraftBirthDate(event.currentTarget.value)
+            }
+            placeholder="e.g. 15 MAR 1990"
+            style={fieldInputStyle}
+          />
+
+          {editError && (
+            <p
+              role="alert"
+              style={{ margin: "0 0 12px", color: "#b42318", fontSize: 13 }}
+            >
+              {editError}
+            </p>
+          )}
+
+          <div style={{ display: "flex", gap: 8 }}>
+            <button
+              type="submit"
+              style={{
+                ...editButtonStyle,
+                borderColor: "#4a90d9",
+                background: "#4a90d9",
+                color: "#fff",
+              }}
+            >
+              Save
+            </button>
+            <button type="button" onClick={cancelEditing} style={editButtonStyle}>
+              Cancel
+            </button>
+          </div>
+        </form>
+      ) : (
+        <>
+          <h2 style={{ margin: "0 0 4px", fontSize: 18 }}>
+            {individual.name}
+          </h2>
+          <div style={{ color: "#888", fontSize: 13, marginBottom: 12 }}>
+            {individual.sex === "M"
+              ? "Male"
+              : individual.sex === "F"
+                ? "Female"
+                : "Unknown"}
+          </div>
+          <button
+            type="button"
+            onClick={() => setIsEditing(true)}
+            style={{ ...editButtonStyle, marginBottom: 16 }}
+          >
+            Edit
+          </button>
+
+          <EventSection
+            title="Birth"
+            date={individual.birthDate}
+            place={individual.birthPlace}
+          />
+        </>
+      )}
 
       <EventSection
         title="Death"
@@ -324,3 +432,32 @@ function ParentNames({
     </>
   );
 }
+
+const fieldLabelStyle = {
+  display: "block",
+  marginBottom: 4,
+  color: "#666",
+  fontSize: 12,
+  fontWeight: 600,
+} as const;
+
+const fieldInputStyle = {
+  width: "100%",
+  boxSizing: "border-box",
+  marginBottom: 12,
+  padding: "8px 10px",
+  border: "1px solid #bbb",
+  borderRadius: 6,
+  color: "#213547",
+  background: "#fff",
+  font: "inherit",
+} as const;
+
+const editButtonStyle = {
+  padding: "7px 12px",
+  border: "1px solid #ccc",
+  borderRadius: 6,
+  background: "#fff",
+  color: "#213547",
+  cursor: "pointer",
+} as const;

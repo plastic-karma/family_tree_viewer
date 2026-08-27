@@ -41,3 +41,11 @@ export interface GedcomData {
   individuals: Map<string, Individual>;
   families: Map<string, Family>;
 }
+
+/**
+ * Parsed GEDCOM data together with the source document used for lossless
+ * export of tags the viewer does not interpret.
+ */
+export interface GedcomDocument extends GedcomData {
+  sourceText: string;
+}

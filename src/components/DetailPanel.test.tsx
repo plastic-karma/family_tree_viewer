@@ -1,7 +1,13 @@
+// @vitest-environment happy-dom
+
+import { act } from "react";
+import { createRoot } from "react-dom/client";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import { DetailPanel } from "./DetailPanel";
 import type { GedcomData, Individual } from "../parser/types";
+
+Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
 
 describe("DetailPanel", () => {
   it("ignores a family reference that does not contain the individual", () => {
@@ -55,6 +61,7 @@ describe("DetailPanel", () => {
         gedcom={data}
         onClose={() => undefined}
         onNavigate={() => undefined}
+        onUpdate={() => undefined}
       />
     );
 
@@ -103,10 +110,98 @@ describe("DetailPanel", () => {
         gedcom={data}
         onClose={() => undefined}
         onNavigate={() => undefined}
+        onUpdate={() => undefined}
       />
     );
 
     expect(html).toContain("Paris, France");
     expect(html).toContain('aria-label="Close details"');
   });
+
+  it("submits updated name and birth date values", async () => {
+    const selected: Individual = {
+      id: "@I1@",
+      name: "Selected Person",
+      sex: "U",
+      birthDate: "1 JAN 1900",
+      familyAsSpouse: [],
+      notes: [],
+    };
+    const data: GedcomData = {
+      individuals: new Map([[selected.id, selected]]),
+      families: new Map(),
+    };
+    const updates: Array<{
+      personId: string;
+      values: Pick<Individual, "name" | "birthDate">;
+    }> = [];
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+
+    try {
+      await act(async () => {
+        root.render(
+          <DetailPanel
+            individual={selected}
+            gedcom={data}
+            onClose={() => undefined}
+            onNavigate={() => undefined}
+            onUpdate={(personId, values) =>
+              updates.push({ personId, values })
+            }
+          />
+        );
+      });
+
+      await clickButton(container, "Edit");
+      const nameInput = container.querySelector('input[name="name"]');
+      const birthDateInput = container.querySelector(
+        'input[name="birthDate"]'
+      );
+      if (
+        !(nameInput instanceof HTMLInputElement) ||
+        !(birthDateInput instanceof HTMLInputElement)
+      ) {
+        throw new Error("Edit fields did not render");
+      }
+
+      await act(async () => {
+        setInputValue(nameInput, " Updated Person ");
+        setInputValue(birthDateInput, "");
+      });
+      await clickButton(container, "Save");
+
+      expect(updates).toEqual([
+        {
+          personId: "@I1@",
+          values: { name: "Updated Person", birthDate: undefined },
+        },
+      ]);
+      expect(container.textContent).toContain("Selected Person");
+    } finally {
+      await act(async () => root.unmount());
+      container.remove();
+    }
+  });
 });
+
+function setInputValue(input: HTMLInputElement, value: string) {
+  const valueSetter = Object.getOwnPropertyDescriptor(
+    HTMLInputElement.prototype,
+    "value"
+  )?.set;
+  if (!valueSetter) throw new Error("Input value setter is unavailable");
+
+  valueSetter.call(input, value);
+  input.dispatchEvent(new Event("input", { bubbles: true }));
+}
+
+async function clickButton(container: HTMLElement, label: string) {
+  const button = Array.from(container.querySelectorAll("button")).find(
+    (candidate) => candidate.textContent === label
+  );
+  if (!button) throw new Error(`Could not find "${label}" button`);
+
+  await act(async () => button.click());
+}

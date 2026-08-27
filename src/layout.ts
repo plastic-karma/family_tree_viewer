@@ -126,10 +126,12 @@ function assignGenerations(data: GedcomData): Map<string, number> {
   return generationByPerson;
 }
 
-export function buildFlowElements(data: GedcomData): {
+export interface FlowElements {
   nodes: Node[];
   edges: Edge[];
-} {
+}
+
+export function buildFlowElements(data: GedcomData): FlowElements {
   const nodes: Node[] = [];
   const edges: Edge[] = [];
   const generationMap = assignGenerations(data);

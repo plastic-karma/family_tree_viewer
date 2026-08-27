@@ -9,6 +9,7 @@ Upload a `.ged` file and explore your family tree interactively — no backend r
 - **GEDCOM parsing** — parses individuals, families, and notes (with CONC/CONT support) entirely in the browser
 - **Interactive tree** — pan, zoom, and click nodes to view details
 - **Detail panel** — shows birth/death, parents, spouses, children, and notes
+- **Editing and export** — update a person's name and birth date, then download a GED file without dropping unrecognized source data
 - **Clickable navigation** — click any name in the detail panel to fly to that person
 - **Search** — find individuals by name with search-as-you-type, then navigate results with the arrow keys and Enter
 

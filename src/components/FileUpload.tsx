@@ -9,7 +9,7 @@ import { useRef, type ChangeEvent, type DragEvent } from "react";
  */
 
 interface FileUploadProps {
-  onFileLoaded: (content: string) => void;
+  onFileLoaded: (content: string, fileName: string) => void;
   onFileError: (message: string) => void;
   error?: string | null;
 }
@@ -110,14 +110,14 @@ export function FileUpload({
 
 function readFile(
   file: File,
-  onFileLoaded: (content: string) => void,
+  onFileLoaded: (content: string, fileName: string) => void,
   onFileError: (message: string) => void
 ) {
   const reader = new FileReader();
   reader.onload = (event) => {
     const text = event.target?.result;
     if (typeof text === "string") {
-      onFileLoaded(text);
+      onFileLoaded(text, file.name);
     } else {
       onFileError(`Could not decode "${file.name}".`);
     }

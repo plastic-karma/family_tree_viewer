@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { parseGedcom } from "./gedcom";
+import { exportGedcom, parseGedcom } from "./gedcom";
 
 describe("parseGedcom", () => {
   it("parses an empty string", () => {
@@ -372,5 +372,77 @@ ${input}`;
     expect(result.individuals.get("@I1@")?.familyAsSpouse).toEqual(["@F1@"]);
     expect(result.individuals.get("@I2@")?.familyAsSpouse).toEqual(["@F1@"]);
     expect(result.individuals.get("@I3@")?.familyAsChild).toBe("@F1@");
+  });
+});
+
+describe("exportGedcom", () => {
+  it("returns the original document unchanged when nothing was edited", () => {
+    const source =
+      "0 HEAD\r\n1 SOUR ExistingApp\r\n0 @I1@ INDI\r\n" +
+      "1 NAME John /Doe/\r\n1 _CUSTOM keep me\r\n0 TRLR\r\n";
+
+    expect(exportGedcom(parseGedcom(source))).toBe(source);
+  });
+
+  it("updates name and birth date without discarding unknown GEDCOM data", () => {
+    const source =
+      "0 HEAD\r\n1 SOUR ExistingApp\r\n0 @I1@ INDI\r\n" +
+      "1 NAME John /Doe/\r\n1 SEX M\r\n1 _CUSTOM keep me\r\n" +
+      "0 TRLR\r\n";
+    const document = parseGedcom(source);
+    const person = document.individuals.get("@I1@");
+    if (!person) throw new Error("Expected test individual");
+
+    person.name = "Jane Smith";
+    person.birthDate = "2 FEB 2001";
+
+    const exported = exportGedcom(document);
+    const reparsed = parseGedcom(exported).individuals.get("@I1@");
+
+    expect(exported).toContain("1 NAME Jane Smith\r\n");
+    expect(exported).toContain(
+      "1 _CUSTOM keep me\r\n1 BIRT\r\n2 DATE 2 FEB 2001\r\n0 TRLR"
+    );
+    expect(exported).not.toContain("John /Doe/");
+    expect(reparsed?.name).toBe("Jane Smith");
+    expect(reparsed?.birthDate).toBe("2 FEB 2001");
+  });
+
+  it("adds a date to an existing birth event before its other details", () => {
+    const source = `0 @I1@ INDI
+1 NAME Jane /Smith/
+1 BIRT
+2 PLAC Portland, Oregon
+0 TRLR`;
+    const document = parseGedcom(source);
+    const person = document.individuals.get("@I1@");
+    if (!person) throw new Error("Expected test individual");
+
+    person.birthDate = "15 MAR 1990";
+
+    expect(exportGedcom(document)).toContain(
+      "1 BIRT\n2 DATE 15 MAR 1990\n2 PLAC Portland, Oregon"
+    );
+  });
+
+  it("removes birth dates while preserving the rest of each birth event", () => {
+    const source = `0 @I1@ INDI
+1 NAME Jane /Smith/
+1 BIRT
+2 DATE 15 MAR 1990
+2 PLAC Portland, Oregon
+0 TRLR`;
+    const document = parseGedcom(source);
+    const person = document.individuals.get("@I1@");
+    if (!person) throw new Error("Expected test individual");
+
+    person.birthDate = undefined;
+
+    const exported = exportGedcom(document);
+    expect(exported).not.toContain("2 DATE");
+    expect(exported).toContain("2 PLAC Portland, Oregon");
+    expect(
+      parseGedcom(exported).individuals.get("@I1@")?.birthDate
+    ).toBeUndefined();
   });
 });
